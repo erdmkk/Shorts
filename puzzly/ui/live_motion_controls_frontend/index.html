@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    :root { color-scheme: light dark; font-family: "Source Sans Pro", sans-serif; }
+    body { margin: 0; padding: 0 2px; background: transparent; }
+    .control { margin: 0 0 12px; }
+    .label { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
+    .value { opacity: .72; font-variant-numeric: tabular-nums; }
+    input[type=range] { width: 100%; accent-color: #13A89E; }
+  </style>
+</head>
+<body><div id="controls"></div>
+<script>
+  const definitions = [
+    ["x_pct", "X position (%)", 0.02, 0.98, 0.001, v => (v * 100).toFixed(1)],
+    ["y_pct", "Y position (%)", 0.02, 0.98, 0.001, v => (v * 100).toFixed(1)],
+    ["size_px", "Size (Final px)", 1, 120, 1, v => Math.round(v)],
+    ["jump_height_px", "Jump height (Final px)", 2, 40, 1, v => Math.round(v)],
+    ["bounce_speed", "Bounce speed", 0.25, 3, 0.25, v => Number(v).toFixed(2) + "×"]
+  ];
+  let state = null;
+  const post = (type, extra = {}) => parent.postMessage({isStreamlitMessage: true, type, ...extra}, "*");
+  function sendValue() { post("streamlit:setComponentValue", {value: state}); }
+  function build(values) {
+    state = {...values};
+    const root = document.getElementById("controls");
+    if (!root.children.length) {
+      definitions.forEach(([name, label, min, max, step, format]) => {
+        const wrap = document.createElement("div"); wrap.className = "control";
+        const heading = document.createElement("div"); heading.className = "label";
+        heading.innerHTML = `<span>${label}</span><span class="value" id="value-${name}"></span>`;
+        const input = document.createElement("input"); input.type = "range";
+        input.min = min; input.max = max; input.step = step; input.id = `input-${name}`;
+        input.addEventListener("input", () => {
+          state[name] = name === "size_px" || name === "jump_height_px" ? Math.round(+input.value) : +input.value;
+          document.getElementById(`value-${name}`).textContent = format(state[name]);
+          sendValue();
+        });
+        wrap.append(heading, input); root.appendChild(wrap);
+      });
+    }
+    definitions.forEach(([name, , , , , format]) => {
+      const input = document.getElementById(`input-${name}`);
+      if (document.activeElement !== input) input.value = state[name];
+      document.getElementById(`value-${name}`).textContent = format(+input.value);
+    });
+    post("streamlit:setFrameHeight", {height: document.documentElement.scrollHeight});
+  }
+  window.addEventListener("message", event => {
+    if (event.data.type === "streamlit:render") build(event.data.args.values);
+  });
+  post("streamlit:componentReady", {apiVersion: 1});
+</script>
+</body>
+</html>

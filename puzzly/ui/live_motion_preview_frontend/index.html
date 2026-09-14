@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; background: transparent; overflow: hidden; }
+    canvas { display: block; width: 100%; height: auto; border-radius: 10px; }
+  </style>
+</head>
+<body><canvas id="preview" width="1080" height="1920"></canvas>
+<script>
+  const canvas = document.getElementById("preview");
+  const context = canvas.getContext("2d", {alpha: false});
+  let scene = null;
+  let background = null;
+  let objectImages = new Map();
+  let startTime = performance.now();
+  let animationStarted = false;
+  const post = (type, extra = {}) => parent.postMessage({isStreamlitMessage: true, type, ...extra}, "*");
+  const loadImage = source => { const image = new Image(); image.src = source; return image; };
+
+  function setScene(next) {
+    scene = next;
+    canvas.width = next.width;
+    canvas.height = next.height;
+    background = loadImage(next.background);
+    objectImages = new Map(next.objects.map(item => [item.object_id, loadImage(item.image)]));
+    startTime = performance.now();
+    if (!animationStarted) { animationStarted = true; requestAnimationFrame(draw); }
+    requestAnimationFrame(reportHeight);
+  }
+
+  function draw(now) {
+    if (!scene) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    if (background && background.complete) context.drawImage(background, 0, 0, canvas.width, canvas.height);
+    const elapsed = ((now - startTime) / 1000) % scene.duration;
+    for (const item of scene.objects) {
+      const offset = Math.sin(2 * Math.PI * item.cycles * elapsed / scene.duration + item.phase);
+      const y = item.y + item.jump * offset;
+      const image = objectImages.get(item.object_id);
+      if (image && image.complete && image.naturalWidth) {
+        context.drawImage(image, item.x-item.size/2, y-item.size/2, item.size, item.size);
+      }
+      if (item.object_id === scene.selected_id) {
+        const radius = Math.max(item.size/2 + 10, 12);
+        context.save();
+        context.lineWidth = 2;
+        context.strokeStyle = "rgba(255,255,255,.95)";
+        context.setLineDash([8, 6]);
+        context.beginPath(); context.arc(item.x, y, radius, 0, Math.PI*2); context.stroke();
+        context.setLineDash([]);
+        context.strokeStyle = "rgba(24,57,67,.95)";
+        context.beginPath();
+        context.moveTo(item.x-radius-5, y); context.lineTo(item.x-radius+3, y);
+        context.moveTo(item.x+radius-3, y); context.lineTo(item.x+radius+5, y);
+        context.moveTo(item.x, y-radius-5); context.lineTo(item.x, y-radius+3);
+        context.moveTo(item.x, y+radius-3); context.lineTo(item.x, y+radius+5);
+        context.stroke(); context.restore();
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+
+  function reportHeight() {
+    post("streamlit:setFrameHeight", {height: Math.ceil(canvas.getBoundingClientRect().height)});
+  }
+  new ResizeObserver(reportHeight).observe(canvas);
+  window.addEventListener("message", event => {
+    if (event.data.type === "streamlit:render") setScene(event.data.args.payload);
+  });
+  post("streamlit:componentReady", {apiVersion: 1});
+</script>
+</body>
+</html>

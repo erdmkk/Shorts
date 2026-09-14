@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+logs/
+output/*
+!output/.gitkeep
+data/generation_history.sqlite*
+data/history.json*
+data/hidden_motion_backgrounds/
+data/hidden_motion_layouts/
+data/hidden_motion_objects/
+assets/audio/generated/*
+!assets/audio/generated/.gitkeep
+data/*.tmp
