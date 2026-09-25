@@ -3,105 +3,118 @@ from statistics import mean
 
 import pytest
 
-from puzzly.config import (DEFAULT_ROUNDS, MEMORY_BOARD_ENTRANCE, MEMORY_COVER_DURATION,
-                           MEMORY_INTRO_DURATION, MEMORY_MEMORIZATION_DURATION,
-                           MEMORY_QUESTION_DURATION, MEMORY_ROUND_DURATION,
-                           MEMORY_THINKING_DURATION, OUTRO_DURATION)
-from puzzly.memory_colors import COLOR_RULES, COLORS, distance_stats
+from puzzly.config import (DEFAULT_ROUNDS, MEMORY_GRID_QUESTIONS, MEMORY_GRID_TOKENS, MEMORY_MEMORIZE,
+                           MEMORY_QUESTION_DURATION, MEMORY_THINKING_DURATION, PUZZLE_FIT_INTRO_DURATION,
+                           PUZZLE_FIT_OUTRO_DURATION, round_duration)
+from puzzly.memory_colors import GRID_COLOR_LEVELS, GRID_COLOR_RULES, GRID_COLORS, GRID_MIN_LIGHTNESS, distance_stats
 from puzzly.models import RoundSpec
-from puzzly.puzzles.memory_challenge import SHAPES, TIMED_QUESTIONS, TOKEN_COUNT, errors, generate
+from puzzly.puzzles.memory_challenge import MEMORY_SHAPES, errors, generate
 from puzzly.validation import validate_spec
-from puzzly.visuals.memory import POSITIONS, SHAPE_LAYOUT, draw_memory_intro, memory_state, shape_mask, token_image, token_layout
+from puzzly.visuals.memory import grid_center, grid_phases, memory_state, shape_mask, token_image, token_layout
 
 
 @pytest.mark.parametrize("difficulty,video_count", [("easy", 500), ("medium", 500), ("hard", 700)])
-def test_memory_volume_structure_determinism_and_color_rules(difficulty: str, video_count: int) -> None:
-    minimums, averages = [], []
+def test_grid_boards_are_valid_deterministic_and_follow_color_rules(difficulty: str, video_count: int) -> None:
     for seed in range(video_count):
-        spec = generate(100_000 + seed, difficulty); validate_spec(spec)
-        assert spec.round_count == 1 and spec.total_duration == pytest.approx(MEMORY_INTRO_DURATION + MEMORY_ROUND_DURATION + OUTRO_DURATION)
-        board = spec.rounds[0]; tokens = board.data["tokens"]
-        assert len(tokens) == TOKEN_COUNT == 5
-        assert len({token["shape"] for token in tokens}) == 5
-        assert set(token["shape"] for token in tokens) <= set(SHAPES)
-        assert len({token["color_id"] for token in tokens}) == 5
-        assert [token["position"] for token in tokens] == [1, 2, 3, 4, 5]
+        level = GRID_COLOR_LEVELS[seed % len(GRID_COLOR_LEVELS)]
+        spec = generate(100_000 + seed, difficulty, f"colors_{level}")
+        validate_spec(spec)
+        assert spec.round_count == 1 and spec.intro_duration == PUZZLE_FIT_INTRO_DURATION
+        assert spec.total_duration == pytest.approx(PUZZLE_FIT_INTRO_DURATION + round_duration("memory_challenge", difficulty)
+                                                    + PUZZLE_FIT_OUTRO_DURATION)
+        board = spec.rounds[0]
+        tokens = board.data["tokens"]
+        shapes = {token["shape"] for token in tokens}
+        assert len(tokens) == MEMORY_GRID_TOKENS == 9 and len(shapes) == 9 and shapes <= set(MEMORY_SHAPES)
+        assert not {"pentagon", "hexagon"} <= shapes
+        assert len({token["color_id"] for token in tokens}) == 9
+        assert [token["position"] for token in tokens] == list(range(1, 10))
         questions, final = board.data["question_order"], board.data["final_position"]
-        assert len(questions) == TIMED_QUESTIONS == len(set(questions)) == 4
-        assert final not in questions and set(questions) | {final} == {1,2,3,4,5}
+        assert len(questions) == len(set(questions)) == MEMORY_GRID_QUESTIONS == 8
+        assert final not in questions and set(questions) | {final} == set(range(1, 10))
+        assert board.data["memorization_seconds"] == MEMORY_MEMORIZE[difficulty]
         assert errors(board.data, board.answer, difficulty) == []
-        minimum, average = distance_stats(COLORS[token["color_id"]] for token in tokens)
-        assert minimum >= COLOR_RULES[difficulty]["min_distance"] - 1e-9
-        minimums.append(minimum); averages.append(average)
-    anchor = generate(90210, difficulty)
-    assert anchor == generate(90210, difficulty) and anchor.fingerprint() == generate(90210, difficulty).fingerprint()
-    test_memory_volume_structure_determinism_and_color_rules.stats[difficulty] = (mean(minimums), mean(averages))
+        colors = [GRID_COLORS[token["color_id"]] for token in tokens]
+        assert board.data["color_level"] == level
+        assert distance_stats(colors)[0] >= GRID_COLOR_RULES[level]["min_distance"] - 1e-9
+        assert all(color.lightness >= GRID_MIN_LIGHTNESS for color in colors)
+    assert generate(90210, difficulty) == generate(90210, difficulty)
 
 
-test_memory_volume_structure_determinism_and_color_rules.stats = {}
-
-
-def test_color_difficulty_statistics_are_ordered() -> None:
+def test_color_level_orders_color_closeness_and_memorize_time() -> None:
     stats = {}
-    for difficulty, count in (("easy", 500), ("medium", 500), ("hard", 700)):
-        pairs = [distance_stats(COLORS[token["color_id"]] for token in generate(seed, difficulty).rounds[0].data["tokens"]) for seed in range(count)]
-        stats[difficulty] = (mean(item[0] for item in pairs), mean(item[1] for item in pairs))
-    assert stats["easy"][0] > stats["medium"][0] > stats["hard"][0]
-    assert stats["easy"][1] > stats["medium"][1] > stats["hard"][1]
-    assert stats["hard"][0] >= COLOR_RULES["hard"]["min_distance"]
+    for level in GRID_COLOR_LEVELS:
+        pairs = [distance_stats(GRID_COLORS[token["color_id"]]
+                                for token in generate(seed, "hard", f"colors_{level}").rounds[0].data["tokens"])
+                 for seed in range(60)]
+        stats[level] = (mean(item[0] for item in pairs), mean(item[1] for item in pairs))
+    assert stats[1][1] > stats[2][1] > stats[3][1] > stats[4][1]  # higher level = closer colours
+    assert stats[1][0] > stats[4][0]
+    assert generate(1, "hard").rounds[0].data["color_level"] == 1  # distinct colours unless the UI asks otherwise
+    assert MEMORY_MEMORIZE["easy"] >= MEMORY_MEMORIZE["medium"] >= MEMORY_MEMORIZE["hard"] == 7.0
 
 
-def test_single_board_timing_and_reveal_progression() -> None:
-    spec = generate(44, "medium"); item = spec.rounds[0]
-    assert DEFAULT_ROUNDS["memory_challenge"] == 1
-    assert MEMORY_MEMORIZATION_DURATION == MEMORY_THINKING_DURATION == 3.0
-    questions_start = MEMORY_BOARD_ENTRANCE + MEMORY_MEMORIZATION_DURATION + MEMORY_COVER_DURATION
-    assert memory_state(.5, item)["phase"] == "memorize"
-    assert memory_state(questions_start-.1, item)["phase"] == "cover"
-    for index in range(4):
-        state = memory_state(questions_start + index*MEMORY_QUESTION_DURATION + .5, item)
-        assert state["phase"] == "question" and state["timer_active"]
-        assert len(state["open_positions"]) == index
-        revealed = memory_state(questions_start + index*MEMORY_QUESTION_DURATION + MEMORY_QUESTION_DURATION-.05, item)
+def test_eight_questions_then_the_ninth_opens_by_itself() -> None:
+    spec = generate(44, "medium")
+    item = spec.rounds[0]
+    times = grid_phases(item)
+    assert DEFAULT_ROUNDS["memory_challenge"] == 1 and MEMORY_THINKING_DURATION == 3.0
+    assert memory_state(times["memorize_start"] + .5, item)["phase"] == "memorize"
+    assert memory_state(times["questions"] - .1, item)["phase"] == "cover"
+    for index in range(8):
+        state = memory_state(times["questions"] + index * MEMORY_QUESTION_DURATION + .5, item)
+        assert state["phase"] == "question" and state["timer_active"] and len(state["open_positions"]) == index
+        assert state["target_position"] == item.data["question_order"][index]
+        revealed = memory_state(times["questions"] + (index + 1) * MEMORY_QUESTION_DURATION - .05, item)
         assert len(revealed["open_positions"]) == index + 1
-    final_wait = memory_state(questions_start + 4*MEMORY_QUESTION_DURATION + .1, item)
-    assert final_wait["phase"] == "final_wait" and len(final_wait["open_positions"]) == 4 and not final_wait["timer_active"]
-    completed = memory_state(MEMORY_ROUND_DURATION-.1, item)
-    assert completed["phase"] == "completed" and len(completed["open_positions"]) == 5 and not completed["timer_active"]
-    with pytest.raises(ValueError): generate(44, "medium", round_count=4)
+    waiting = memory_state(times["final"] + .1, item)
+    assert waiting["phase"] == "final_wait" and len(waiting["open_positions"]) == 8 and not waiting["timer_active"]
+    completed = memory_state(spec.round_duration - .1, item)
+    assert completed["phase"] == "completed" and len(completed["open_positions"]) == 9
+    with pytest.raises(ValueError):
+        generate(44, "medium", round_count=4)
 
 
-def test_shapes_fit_container_without_clipping() -> None:
-    assert sum(x for x, _ in POSITIONS[:3]) / 3 == 540
-    assert sum(x for x, _ in POSITIONS[3:]) / 2 == 540
-    for shape in SHAPES:
-        image = token_image(shape, "#397FAF", 256); box = image.getchannel("A").getbbox()
+def test_grid_is_centered_and_every_shape_fits_its_card() -> None:
+    assert sum(grid_center(position)[0] for position in range(1, 10)) / 9 == 540
+    xs = sorted({grid_center(position)[0] for position in range(1, 10)})
+    assert len(xs) == 3 and xs[0] >= 100 and xs[-1] <= 980
+    for shape in MEMORY_SHAPES:
+        image = token_image(shape, "#4FC3F7", 256)
+        box = image.getchannel("A").getbbox()
         assert box is not None and box[0] > 0 and box[1] > 0 and box[2] < 256 and box[3] < 256
-        mask_box = shape_mask(shape, 256).getbbox(); assert mask_box is not None
+        mask_box = shape_mask(shape, 256).getbbox()
         expected_x, expected_y = token_layout(shape, 256)["optical_center"]
-        assert abs((mask_box[0]+mask_box[2])/2-expected_x) <= 1.5
-        assert abs((mask_box[1]+mask_box[3])/2-expected_y) <= 1.5
-        # The complete token, including its soft lower shadow, remains centered by eye.
-        assert abs((box[0]+box[2])/2-128) <= 8
-        assert abs((box[1]+box[3])/2-128) <= 8
-
-
-def test_v6_2_intro_is_simple_and_uses_per_shape_optical_layout() -> None:
-    import inspect
-    source = inspect.getsource(draw_memory_intro)
-    assert "_tile(" not in source and "number" not in source
-    assert '"?"' in source and len(SHAPE_LAYOUT) == len(SHAPES)
-    assert any(offset_y != 0 for _, _, offset_y in SHAPE_LAYOUT.values())
+        assert abs((mask_box[0] + mask_box[2]) / 2 - expected_x) <= 1.5
+        assert abs((mask_box[1] + mask_box[3]) / 2 - expected_y) <= 1.5
 
 
 def test_fingerprint_covers_question_order_and_tokens() -> None:
-    spec = generate(123, "easy"); board = spec.rounds[0]
-    changed_data = {**board.data, "question_order": list(reversed(board.data["question_order"]))}
-    changed_board = RoundSpec(0, board.kind, changed_data, {"question_order": changed_data["question_order"], "final_position": board.data["final_position"]})
+    spec = generate(123, "easy")
+    board = spec.rounds[0]
+    changed = {**board.data, "question_order": list(reversed(board.data["question_order"]))}
+    changed_board = RoundSpec(0, board.kind, changed, {"question_order": changed["question_order"],
+                                                       "final_position": board.data["final_position"]})
     assert board.fingerprint() != changed_board.fingerprint()
     assert spec.fingerprint() != replace(spec, rounds=(changed_board,)).fingerprint()
 
 
-def test_active_memory_pipeline_has_no_object_asset_fields() -> None:
-    data = generate(8, "hard").rounds[0].data
-    assert not ({"object_ids", "target_id", "similarity_groups"} & data.keys())
+def test_invalid_boards_are_rejected() -> None:
+    board = generate(5, "hard", "colors_4").rounds[0]
+    easy_colors = generate(5, "hard", "colors_1").rounds[0].data["tokens"]
+    mixed = [{**token, "color_id": easy["color_id"], "color_value": easy["color_value"]}
+             for token, easy in zip(board.data["tokens"], easy_colors)]
+    assert errors({**board.data, "tokens": mixed}, board.answer, "hard")  # level 4 must use close tones
+    assert errors({**board.data, "question_order": board.data["question_order"][:4]}, board.answer, "hard")
+
+
+def test_memory_frames_render_board_questions_and_cover() -> None:
+    import numpy as np
+    from puzzly.renderer import render_cover, render_frame
+    spec = generate(21, "hard")
+    times = grid_phases(spec.rounds[0])
+    start = spec.intro_duration
+    memorize = np.asarray(render_frame(spec, start + 1.0, (540, 960)))
+    question = np.asarray(render_frame(spec, start + times["questions"] + 1.0, (540, 960)))
+    assert np.abs(memorize.astype(int) - question.astype(int)).mean() > 5
+    assert render_cover(spec).size == (1080, 1920)

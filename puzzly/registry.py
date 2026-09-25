@@ -9,14 +9,16 @@ PUZZLE_LABELS = {
     "flash_count": "Flash Count",
     "lucky_pick": "Lucky Pick",
     "hidden_motion_hunt": "Hidden Motion Hunt",
+    "bounce_arena": "Bounce Arena",
+    "cube_count": "Cube Count",
     "line_follow": "Line Follow",
 }
 
 ACTIVE_PUZZLE_TYPES = (
     "quick_math", "missing_number", "puzzle_fit", "find_the_exit", "memory_challenge", "flash_count", "lucky_pick",
-    "hidden_motion_hunt",
+    "hidden_motion_hunt", "bounce_arena", "cube_count",
 )
-MIXED_PUZZLE_TYPES = tuple(kind for kind in ACTIVE_PUZZLE_TYPES if kind != "hidden_motion_hunt")
+MIXED_PUZZLE_TYPES = tuple(kind for kind in ACTIVE_PUZZLE_TYPES if kind not in ("hidden_motion_hunt", "bounce_arena"))
 EXPERIMENTAL_PUZZLE_TYPES = ("line_follow",)
 SUPPORTED_PUZZLE_TYPES = ACTIVE_PUZZLE_TYPES + EXPERIMENTAL_PUZZLE_TYPES
 

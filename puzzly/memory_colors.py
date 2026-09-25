@@ -107,3 +107,104 @@ def palette_errors(colors: Iterable[MemoryColor], difficulty: str, backgrounds: 
         if any(abs(color.lightness - hex_to_oklab(background)[0]) < 0.10 for background in backgrounds):
             errors.append(f"memory color lacks background lightness contrast: {color.id}")
     return errors
+
+
+# ---------------------------------------------------------------- 3x3 grid board (nine tokens on the dark theme)
+
+GRID_COLORS = {item.id: item for item in (
+    # Easy: nine clearly different hues.
+    MemoryColor("g_red", "#FF5A5F", "red"), MemoryColor("g_orange", "#FF9F1C", "orange"),
+    MemoryColor("g_yellow", "#FFD93D", "yellow"), MemoryColor("g_lime", "#7ED957", "green"),
+    MemoryColor("g_teal", "#2EC4B6", "cyan"), MemoryColor("g_sky", "#4FC3F7", "blue"),
+    MemoryColor("g_blue", "#3D6BFF", "blue"), MemoryColor("g_purple", "#A66BFF", "purple"),
+    MemoryColor("g_pink", "#FF6FB5", "pink"),
+    MemoryColor("g2_red", "#F94144", "red"), MemoryColor("g2_orange", "#F8961E", "orange"),
+    MemoryColor("g2_yellow", "#F9C74F", "yellow"), MemoryColor("g2_green", "#90BE6D", "green"),
+    MemoryColor("g2_teal", "#43AA8B", "cyan"), MemoryColor("g2_sky", "#4D9DE0", "blue"),
+    MemoryColor("g2_blue", "#577BFF", "blue"), MemoryColor("g2_purple", "#B56CE0", "purple"),
+    MemoryColor("g2_pink", "#F15BB5", "pink"),
+    # Medium: three related shades in each of three families.
+    MemoryColor("m_coral", "#FF6B6B", "warm"), MemoryColor("m_orange", "#FF9F43", "warm"),
+    MemoryColor("m_amber", "#FFC857", "warm"), MemoryColor("m_blue", "#4DA3FF", "cool"),
+    MemoryColor("m_indigo", "#6C7BFF", "cool"), MemoryColor("m_lilac", "#A78BFA", "cool"),
+    MemoryColor("m_mint", "#34D399", "green"), MemoryColor("m_aqua", "#2DD4BF", "green"),
+    MemoryColor("m_lime", "#A3E635", "green"),
+    MemoryColor("m2_red", "#F2545B", "warm"), MemoryColor("m2_orange", "#F28C38", "warm"),
+    MemoryColor("m2_amber", "#F2B84B", "warm"), MemoryColor("m2_cyan", "#3FA7D6", "cool"),
+    MemoryColor("m2_blue", "#5A7BE0", "cool"), MemoryColor("m2_violet", "#9A7BE8", "cool"),
+    MemoryColor("m2_green", "#3CC48B", "green"), MemoryColor("m2_teal", "#26B5A8", "green"),
+    MemoryColor("m2_lime", "#8FCB3E", "green"),
+    # Hard: nine close shades of one family.
+    MemoryColor("h_cyan", "#5EC8FF", "cool"), MemoryColor("h_azure", "#45A6FF", "cool"),
+    MemoryColor("h_blue", "#3D84FF", "cool"), MemoryColor("h_indigo", "#5F6BFF", "cool"),
+    MemoryColor("h_violet", "#7D6BFF", "cool"), MemoryColor("h_lavender", "#9C82FF", "cool"),
+    MemoryColor("h_ice", "#6BD6E8", "cool"), MemoryColor("h_steel", "#4DB8D8", "cool"),
+    MemoryColor("h_periwinkle", "#8FA8FF", "cool"),
+    MemoryColor("h_red", "#FF6B6B", "warm"), MemoryColor("h_coral", "#FF8A5B", "warm"),
+    MemoryColor("h_orange", "#FFA94D", "warm"), MemoryColor("h_pink", "#FF7AA2", "warm"),
+    MemoryColor("h_rose", "#FF5C8A", "warm"), MemoryColor("h_apricot", "#FFB86B", "warm"),
+    MemoryColor("h_brick", "#F2735A", "warm"), MemoryColor("h_salmon", "#FF9E8A", "warm"),
+    MemoryColor("h_gold", "#FFC857", "warm"),
+    # Hard (current): neighbouring hues of one half of the wheel, varied in lightness, so the board is readable but
+    # still easy to mix up. The single-family h_* shades above stay only for re-rendering older manifests.
+    MemoryColor("hc_sky", "#4FD1FF", "cool"), MemoryColor("hc_blue", "#3D8BFF", "cool"),
+    MemoryColor("hc_indigo", "#5B5BFF", "cool"), MemoryColor("hc_violet", "#9A5BFF", "cool"),
+    MemoryColor("hc_orchid", "#D98BFF", "cool"), MemoryColor("hc_mint", "#7FE3D0", "cool"),
+    MemoryColor("hc_periwinkle", "#A8B8FF", "cool"), MemoryColor("hc_teal", "#2FB5C8", "cool"),
+    MemoryColor("hc_cornflower", "#6FA0FF", "cool"),
+    MemoryColor("hc_red", "#FF5A5A", "warm"), MemoryColor("hc_orange", "#FF8A3D", "warm"),
+    MemoryColor("hc_amber", "#FFC23D", "warm"), MemoryColor("hc_yellow", "#F2E14B", "warm"),
+    MemoryColor("hc_lime", "#A6E05A", "warm"), MemoryColor("hc_pink", "#FF7AA8", "warm"),
+    MemoryColor("hc_peach", "#FFB08A", "warm"), MemoryColor("hc_brick", "#D9503E", "warm"),
+    MemoryColor("hc_cream", "#FFDDA0", "warm"),
+)}
+
+# Colour similarity levels, chosen in the UI: the higher the level, the closer the nine colours.
+GRID_PALETTE_IDS = {
+    1: (("g_red", "g_orange", "g_yellow", "g_lime", "g_teal", "g_sky", "g_blue", "g_purple", "g_pink"),
+             ("g2_red", "g2_orange", "g2_yellow", "g2_green", "g2_teal", "g2_sky", "g2_blue", "g2_purple", "g2_pink")),
+    2: (("m_coral", "m_orange", "m_amber", "m_blue", "m_indigo", "m_lilac", "m_mint", "m_aqua", "m_lime"),
+               ("m2_red", "m2_orange", "m2_amber", "m2_cyan", "m2_blue", "m2_violet", "m2_green", "m2_teal", "m2_lime")),
+    3: (("hc_sky", "hc_blue", "hc_indigo", "hc_violet", "hc_orchid", "hc_mint", "hc_periwinkle", "hc_teal",
+              "hc_cornflower"),
+             ("hc_red", "hc_orange", "hc_amber", "hc_yellow", "hc_lime", "hc_pink", "hc_peach", "hc_brick", "hc_cream")),
+    4: (("h_cyan", "h_azure", "h_blue", "h_indigo", "h_violet", "h_lavender", "h_ice", "h_steel", "h_periwinkle"),
+        ("h_red", "h_coral", "h_orange", "h_pink", "h_rose", "h_apricot", "h_brick", "h_salmon", "h_gold")),
+}
+GRID_COLOR_RULES = {
+    1: {"min_distance": 0.10, "min_average": 0.24},  # nine distinct hues (yellow, orange, blue, green, pink...)
+    2: {"min_distance": 0.05, "min_average": 0.20},  # three shades in each of three families
+    3: {"min_distance": 0.07, "min_average": 0.16, "max_average": 0.20},  # neighbouring hues of half the wheel
+    4: {"min_distance": 0.035, "min_average": 0.10, "max_average": 0.15},  # close shades of one family
+}
+GRID_COLOR_LEVELS = tuple(GRID_PALETTE_IDS)
+DEFAULT_GRID_COLOR_LEVEL = 1
+COLOR_LEVEL_THEMES = {f"colors_{level}": level for level in GRID_COLOR_LEVELS}  # UI choice travels as the theme
+
+
+def infer_color_level(color_ids: Iterable[str]) -> int | None:
+    """Level whose palette holds these colours (older manifests stored no level)."""
+    ids = set(color_ids)
+    return next((level for level, groups in GRID_PALETTE_IDS.items() if any(ids == set(group) for group in groups)), None)
+GRID_MIN_LIGHTNESS = 0.55  # every token stays bright on the dark Puzzly for You cards
+
+
+def grid_palette(level: int, variant: int) -> tuple[MemoryColor, ...]:
+    groups = GRID_PALETTE_IDS[level]
+    return tuple(GRID_COLORS[color_id] for color_id in groups[variant % len(groups)])
+
+
+def grid_palette_errors(colors: Iterable[MemoryColor], level: int) -> list[str]:
+    values = list(colors)
+    if len(values) != 9 or len({item.id for item in values}) != 9:
+        return ["memory grid palette must contain nine unique colors"]
+    errors: list[str] = []
+    minimum, average = distance_stats(values)
+    rules = GRID_COLOR_RULES[level]
+    if minimum < rules["min_distance"] or average < rules["min_average"]:
+        errors.append("memory colors do not meet perceptual separation minimums")
+    if average > rules.get("max_average", 1.0):
+        errors.append("memory colors are too dissimilar for this difficulty")
+    if any(color.lightness < GRID_MIN_LIGHTNESS for color in values):
+        errors.append("memory colors must stay bright on the dark board")
+    return errors

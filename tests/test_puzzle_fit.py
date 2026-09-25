@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import pytest
+
 from puzzly.config import round_duration, thinking_duration
 from puzzly.puzzles.puzzle_fit import CARD_BOUNDS, HARD_CARD_BOUNDS, generate, visual_state
 from puzzly.validation import validation_errors
@@ -14,7 +16,7 @@ def test_at_least_1000_puzzle_fit_rounds_are_valid() -> None:
             for round_spec in spec.rounds:
                 rounds_seen += 1
                 data = round_spec.data
-                expected = 4 if difficulty == "hard" else 3
+                expected = 9 if difficulty == "hard" else 3
                 assert len(data["candidates"]) == len({tuple(candidate) for candidate in data["candidates"]}) == expected
                 assert data["board_kind"] == "jigsaw"
                 assert len(data["piece_edges"]) == data["rows"] * data["columns"]
@@ -28,23 +30,34 @@ def test_puzzle_fit_is_deterministic() -> None:
 
 
 def test_visual_state_progression_teaches_the_game() -> None:
-    assert [visual_state(moment) for moment in (0.1, 0.5, 2.0, 4.4, 4.8, 5.4)] == [
-        "choices", "thinking", "thinking", "highlight", "moving", "solved",
+    assert [visual_state(moment) for moment in (0.1, 0.5, 2.0, 4.4, 4.8, 5.0, 5.4)] == [
+        "choices", "thinking", "thinking", "eliminating", "eliminating", "moving", "solved",
     ]
 
 
-def test_hard_has_one_extra_second_and_four_choices_in_two_by_two_layout() -> None:
+def test_hard_uses_nine_choices_six_second_thinking_and_complex_board() -> None:
     assert thinking_duration("puzzle_fit", "easy") == thinking_duration("puzzle_fit", "medium") == 4.0
-    assert thinking_duration("puzzle_fit", "hard") == 5.0
-    assert round_duration("puzzle_fit", "hard") == round_duration("puzzle_fit", "medium") + 1.0
-    assert visual_state(4.8, "hard") == "thinking"
-    assert visual_state(5.4, "hard") == "highlight"
+    assert thinking_duration("puzzle_fit", "hard") == 6.0
+    assert round_duration("puzzle_fit", "hard") == round_duration("puzzle_fit", "medium") + 2.0
+    assert visual_state(6.2, "hard") == "thinking"
+    assert visual_state(6.4, "hard") == "eliminating"
     for difficulty, expected_bounds in (("easy", CARD_BOUNDS), ("medium", CARD_BOUNDS), ("hard", HARD_CARD_BOUNDS)):
         spec = generate(120, difficulty)
         assert spec.round_duration == round_duration("puzzle_fit", difficulty)
         for item in spec.rounds:
             assert tuple(tuple(bounds) for bounds in item.data["candidate_cards"]) == expected_bounds
-            assert len(item.data["candidates"]) == (4 if difficulty == "hard" else 3)
+            assert len(item.data["candidates"]) == (9 if difficulty == "hard" else 3)
+            if difficulty == "hard":
+                assert item.data["rows"] * item.data["columns"] in (6, 9)
+
+
+def test_hard_uses_both_readable_six_and_nine_piece_layouts() -> None:
+    layouts = {
+        (item.data["rows"], item.data["columns"])
+        for seed in range(40) for item in generate(seed, "hard").rounds
+    }
+    assert layouts == {(2, 3), (3, 3)}
+    assert len(HARD_CARD_BOUNDS) == 9
 
 
 def test_hole_geometry_exactly_matches_correct_piece() -> None:
@@ -68,20 +81,38 @@ def test_board_variety_includes_corner_edge_and_center_holes() -> None:
 
 
 def test_thinking_does_not_reveal_or_move_the_answer() -> None:
-    import numpy as np
-    from puzzly.renderer import render_cover, render_frame
-    spec = generate(44)
-    early = np.asarray(render_frame(spec, spec.intro_duration + 0.4, (540, 960)))
-    late = np.asarray(render_frame(spec, spec.intro_duration + 4.2, (540, 960)))
-    # Board and loose candidates remain identical; only the timer changes below.
-    assert np.array_equal(early[140:750], late[140:750])
+    from puzzly.puzzles.puzzle_fit import phase_times
+    from puzzly.visuals.puzzle_fit import BOB_AMPLITUDE, bob_offset, elimination_order
+    spec = generate(44, "hard")
+    think_end = phase_times("hard")["think_end"]
+    for item in spec.rounds:
+        data = item.data
+        order = elimination_order(data)
+        assert sorted(order + [data["correct_index"]]) == list(range(9))
+        # Every candidate floats with the same amplitude, so motion never singles out the answer.
+        for index in range(9):
+            assert max(abs(bob_offset(index, step / 30)) for step in range(60)) == pytest.approx(BOB_AMPLITUDE, rel=.02)
+    assert all(visual_state(moment, "hard") in ("choices", "thinking") for moment in (0.0, 1.0, think_end - .01))
 
 
-def test_intro_is_fixed_concept_art_and_does_not_use_first_board() -> None:
+def test_hook_intro_and_cover_show_first_level_unsolved() -> None:
     import numpy as np
     from puzzly.renderer import render_cover, render_frame
+    from puzzly.visuals.puzzle_fit import COVER_TIME
     spec = generate(44, "hard")
     changed = replace(spec, rounds=generate(99, "hard").rounds)
-    assert np.array_equal(np.asarray(render_frame(spec, .9, (540, 960))),
-                          np.asarray(render_frame(changed, .9, (540, 960))))
-    assert np.array_equal(np.asarray(render_cover(spec)), np.asarray(render_cover(changed)))
+    assert not np.array_equal(np.asarray(render_frame(spec, .6, (540, 960))), np.asarray(render_frame(changed, .6, (540, 960))))
+    assert render_cover(spec).size == (1080, 1920)
+    assert COVER_TIME < spec.intro_duration
+
+
+def test_levels_escalate_within_each_video() -> None:
+    for seed in range(30):
+        for difficulty in ("easy", "medium", "hard"):
+            rounds = generate(seed, difficulty).rounds
+            assert [item.data["level"] for item in rounds] == [1, 2, 3, 4, 5]
+            sizes = [item.data["rows"] * item.data["columns"] for item in rounds]
+            assert sizes == sorted(sizes) and sizes[0] < sizes[-1]
+            assert len({item.data["art_style"] for item in rounds}) == 5
+        final = generate(seed, "hard").rounds[-1].data
+        assert final["hole_slot"] == 4 and 0 not in final["hole_edges"]

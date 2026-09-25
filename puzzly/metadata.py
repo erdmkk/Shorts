@@ -15,11 +15,13 @@ TITLES = {
     "flash_count": "Flash Count Challenge! ⚡👀 #shorts",
     "lucky_pick": "Pick One... Will It Survive? 👀 #shorts",
     "hidden_motion_hunt": "Can You Find All 7 Moving Objects? 👀 #shorts",
+    "bounce_arena": "Pick a Ball. Last One in the Ring Wins. 🔴🔵🟡 #shorts",
+    "cube_count": "How Many Cubes Did You See? 🧊 #shorts",
 }
-DESCRIPTION = "A quick visual puzzle from Puzzly for Kids. Think, play and learn! 🧩"
-TAGS = "puzzly,kids puzzles,brain games,educational shorts,visual puzzle,learning through play,shorts"
+DESCRIPTION = "A quick visual challenge from Puzzly for You. How many can you solve? 🧩"
+TAGS = "puzzly,puzzly for you,brain teaser,puzzle challenge,visual puzzle,brain games,shorts"
 FIELDS = (
-    "filename", "cover_filename", "sequence_no", "video_id", "puzzle_type", "theme", "difficulty", "seed", "question",
+    "filename", "cover_filename", "sequence_no", "video_id", "puzzle_type", "theme", "difficulty", "seed", "quality", "question",
     "answer", "youtube_title", "youtube_description", "youtube_tags", "created_at",
     "round_count", "duration_seconds", "token_shapes", "color_ids", "token_positions",
     "question_order", "final_auto_reveal",
@@ -31,35 +33,65 @@ FIELDS = (
     "hidden_object_diameters", "hidden_object_shapes", "hidden_object_colors",
     "hidden_object_jump_heights", "hidden_object_bounce_speeds", "hidden_object_sources",
     "hidden_object_png_hashes", "motion_parameters",
+    "bounce_initial_positions", "bounce_initial_velocities", "bounce_opening",
+    "bounce_elimination_order", "bounce_winner", "bounce_simulation_duration",
+    "bounce_initial_condition_attempt",
     "render_seconds", "validation_status",
 )
 
 
 def youtube_metadata(spec: VideoSpec) -> dict[str, str]:
     if spec.puzzle_type == "quick_math":
-        title = f"Can You Solve All {spec.round_count}? ➕🧠 #shorts" if spec.seed % 2 == 0 else f"{spec.round_count} Quick Math Challenges! 🔢 #shorts"
+        variants = (("Fill In the Missing Signs. No Calculator. 🧠 #shorts", "+ − × ÷  Which Signs Are Missing? #shorts",
+                     "Only One Combination Works. Find It. 🧠 #shorts", f"{spec.round_count} Levels. The Last One Has a Trap. ➗ #shorts")
+                    if spec.operation == "operators" else None) or ("Solve the Shapes. No Calculator. 🔺🟦 #shorts", f"{spec.round_count} Levels of Shape Math. Can You Finish? 🧠 #shorts",
+                    "The Last Level Has a Trap. 🔺➕🟦 #shorts", "Find the Value of Every Shape ⏱️🧠 #shorts")
+        title = variants[spec.seed % len(variants)]
     elif spec.puzzle_type == "memory_challenge":
-        variants = ("Can You Remember All 5? 🧠 #shorts", "Test Your Color Memory! 🧠🎨 #shorts", "How Good Is Your Visual Memory? 👀🧠 #shorts", "Remember the Shapes! 🧠 #shorts")
+        seconds = spec.rounds[0].data["memorization_seconds"]
+        variants = ("Can You Remember All 9? 🧠 #shorts", f"{seconds:g} Seconds to Memorize 9 Shapes ⏱️🧠 #shorts",
+                    "How Good Is Your Visual Memory? 👀🧠 #shorts", "Where Was It? 8 Questions 🧠 #shorts")
         title = variants[spec.seed % len(variants)]
     elif spec.puzzle_type == "flash_count":
         variants = ("How Many Did You See? 👀 #shorts", "Count Them Before They Disappear! 👀🧠 #shorts", "Flash Count Challenge! ⚡👀 #shorts")
         title = variants[spec.seed % len(variants)]
     elif spec.puzzle_type == "lucky_pick":
-        variants = ("Pick One... Will It Survive? 👀 #shorts", "Choose a Color! Which One Wins? 🌈 #shorts",
-                    "Pick One Before It Starts! 👀✨ #shorts", "Will Your Color Survive? 🎯 #shorts")
+        variants = ("Pick One. Only One Survives. 👀 #shorts", "Pick Before the Timer Ends. Will Yours Survive? ⏱️👀 #shorts",
+                    "7 Colors. 1 Survivor. Pick Now. 🎯 #shorts", "Will Your Color Survive the Maze? 👀 #shorts")
+        title = variants[spec.seed % len(variants)]
+    elif spec.puzzle_type == "puzzle_fit":
+        variants = ("Only One Piece Fits. Can You Find It? 🧩 #shorts", f"{spec.round_count} Levels. Each One Harder. 🧩 #shorts",
+                    "Which Piece Fits? Beat the Timer ⏱️🧩 #shorts")
+        title = variants[spec.seed % len(variants)]
+    elif spec.puzzle_type == "cube_count":
+        seconds = spec.rounds[0].data["visible_seconds"]
+        variants = ("How Many Cubes Did You See? 🧊 #shorts", f"{seconds:g} {'Second' if seconds == 1 else 'Seconds'} to Count the Cubes ⏱️🧊 #shorts",
+                    f"{spec.round_count} Levels of Cube Counting 🧠🧊 #shorts")
         title = variants[spec.seed % len(variants)]
     elif spec.puzzle_type == "hidden_motion_hunt":
         title = TITLES["hidden_motion_hunt"]
+    elif spec.puzzle_type == "bounce_arena":
+        title = TITLES["bounce_arena"]
     else:
         title = TITLES[spec.puzzle_type].format(round_count=spec.round_count)
-    if spec.puzzle_type == "memory_challenge":
-        description = "Watch the colors and shapes, then test your visual memory with Puzzly. 🧩"
+    if spec.puzzle_type == "quick_math" and spec.operation == "operators":
+        description = "Put the right signs between the numbers. Only one combination works. Comment how many you solved! 🧠"
+    elif spec.puzzle_type == "quick_math":
+        description = "Find the value of every shape, then solve the last line. No calculator. Comment how many you solved! 🧠"
+    elif spec.puzzle_type == "memory_challenge":
+        description = "Memorize the 3x3 board, then find every shape. Comment how many you got! 🧠"
     elif spec.puzzle_type == "flash_count":
         description = "Look quickly, remember the shapes, and count how many you saw."
     elif spec.puzzle_type == "lucky_pick":
-        description = "Pick one color and see if your choice is the last one standing!"
+        description = "Pick one before the timer ends. Only one survives the maze. Comment if yours made it! 👀"
+    elif spec.puzzle_type == "puzzle_fit":
+        description = "Only one piece fits. Beat the timer and comment how many you got! 🧩"
+    elif spec.puzzle_type == "cube_count":
+        description = "The cubes flash for a moment. Count every one, including the hidden ones, and comment your score! 🧊"
     elif spec.puzzle_type == "hidden_motion_hunt":
         description = "Look closely and find all 7 moving objects hidden in the scene."
+    elif spec.puzzle_type == "bounce_arena":
+        description = "Pick a ball before the timer ends. Real physics, one spinning gap, one survivor. Comment your color! 🎯"
     else:
         description = DESCRIPTION
     tags = TAGS
@@ -69,6 +101,10 @@ def youtube_metadata(spec: VideoSpec) -> dict[str, str]:
         tags += ",lucky pick,pick one"
     elif spec.puzzle_type == "hidden_motion_hunt":
         tags += ",hidden objects,visual search,moving objects"
+    elif spec.puzzle_type == "bounce_arena":
+        tags += ",bounce arena,pick one,physics game"
+    elif spec.puzzle_type == "cube_count":
+        tags += ",cube count,block counting,spatial reasoning"
     return {"youtube_title": title, "youtube_description": description, "youtube_tags": tags}
 
 

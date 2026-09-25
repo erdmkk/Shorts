@@ -7,8 +7,10 @@ import time
 
 import streamlit as st
 
-from puzzly.config import DEFAULT_ROUNDS, FLASH_INTRO_DURATION, FLASH_VISIBLE_DURATIONS, HIDDEN_MOTION_DURATION, INTRO_DURATION, LUCKY_INTRO_DURATION, MEMORY_INTRO_DURATION, OUTRO_DURATION, OUTPUT_DIR, round_duration
-from puzzly.generator import generate_unique_specs, render_batch
+from puzzly.config import DEFAULT_ROUNDS, FLASH_VISIBLE_DURATIONS, HIDDEN_MOTION_DURATION, LUCKY_INTRO_DURATION, OUTRO_DURATION, OUTPUT_DIR, intro_outro, round_duration
+from puzzly.generator import (generate_unique_specs, render_batch, render_draft_previews,
+                              rerender_record_final, save_draft_preview)
+from puzzly.history import HistoryStore
 from puzzly.logging_config import configure_logging
 from puzzly.puzzles.hidden_motion_hunt import (COLORS as HIDDEN_COLORS, SHAPES as HIDDEN_SHAPES,
                                                add_manual_object, default_manual_layout,
@@ -27,7 +29,7 @@ LOGGER = logging.getLogger(__name__)
 LOGGER.info("Application started")
 
 TYPE_LABELS = {"Karışık": "mixed", **active_type_labels()}
-OPERATION_LABELS = {"Mixed": "mixed", "Addition": "addition", "Subtraction": "subtraction", "Multiplication": "multiplication"}
+QUICK_MATH_FORMATS = {"Şekil Denklemleri": "shapes", "Kayıp Operatör": "operators"}
 
 st.set_page_config(page_title="Puzzly Shorts Generator", page_icon="🧩", layout="centered")
 st.title("🧩 Puzzly Shorts Generator")
@@ -35,7 +37,7 @@ st.caption("Think • Play • Learn — çok turlu, tamamen yerel video üretim
 
 selected_type_label = st.selectbox("Puzzle Type", list(TYPE_LABELS))
 selected_type = TYPE_LABELS[selected_type_label]
-difficulty = None if selected_type in ("lucky_pick", "hidden_motion_hunt") else st.selectbox("Difficulty", ["Easy", "Medium", "Hard"]).lower()
+difficulty = None if selected_type in ("lucky_pick", "hidden_motion_hunt", "bounce_arena") else st.selectbox("Difficulty", ["Easy", "Medium", "Hard"], index=2).lower()  # Puzzly for You videos are produced in Hard
 background_upload = None
 placement_mode = "auto"
 manual_objects = None
@@ -157,25 +159,38 @@ if selected_type == "hidden_motion_hunt":
 operation = "mixed"
 if selected_type == "quick_math":
     assert difficulty is not None
-    available_operations = ["Mixed", "Addition", "Subtraction"] if difficulty == "easy" else list(OPERATION_LABELS)
-    operation = OPERATION_LABELS[st.selectbox("Operation", available_operations)]
+    operation = QUICK_MATH_FORMATS[st.selectbox("Format", list(QUICK_MATH_FORMATS))]
+    from puzzly.config import QUICK_MATH_THINKING
+    level_times = "/".join(f"{value:g}" for value in QUICK_MATH_THINKING[difficulty])
+    format_label = "Şekil denklemleri" if operation == "shapes" else "Eksik işaretler (+ − × ÷)"
+    st.caption(f"{format_label} • seviye seviye zorlaşır • {level_times} sn düşünme • son seviyelerde işlem önceliği tuzağı")
 theme = "boards" if selected_type == "puzzle_fit" else "auto"
+MEMORY_COLOR_LABELS = {"1 · Düşük — belirgin farklı renkler": 1, "2 · Orta — üç renk ailesi": 2,
+                       "3 · Yüksek — komşu renk tonları": 3, "4 · Çok yüksek — tek renk ailesi": 4}
+if selected_type == "memory_challenge":
+    color_level = MEMORY_COLOR_LABELS[st.selectbox("Renk benzerliği", list(MEMORY_COLOR_LABELS))]
+    theme = f"colors_{color_level}"  # higher level = closer colours
 if selected_type == "puzzle_fit":
     st.selectbox("Theme", ["Jigsaw Boards"], disabled=True)
 challenges = None
-if selected_type not in ("memory_challenge", "lucky_pick", "hidden_motion_hunt"):
+if selected_type not in ("memory_challenge", "lucky_pick", "hidden_motion_hunt", "bounce_arena"):
     challenge_label = st.selectbox("Challenges per video", ["Auto", "3", "4", "5"])
     challenges = None if challenge_label == "Auto" else int(challenge_label)
 else:
     if selected_type == "memory_challenge":
-        difficulty_hint = {"easy": "Yüksek renk kontrastı", "medium": "Orta renk benzerliği", "hard": "Benzer renk tonları"}[difficulty]
-        st.caption(f"5 renkli şekil • 4 hafıza sorusu • {difficulty_hint}")
+        from puzzly.config import MEMORY_MEMORIZE
+        st.caption(f"3x3 ızgara • 9 şekil • 8 hafıza sorusu • {MEMORY_MEMORIZE[difficulty]:g} sn ezber • renk benzerliği {color_level}/4")
 if selected_type == "flash_count":
     st.caption(f"Tek şekil ve renk • {FLASH_VISIBLE_DURATIONS[difficulty]:.2f} sn görünür • 3.0 sn düşünme")
+if selected_type == "cube_count":
+    from puzzly.config import CUBE_VISIBLE
+    st.caption(f"İzometrik küp kuleleri • {CUBE_VISIBLE[difficulty]:g} sn görünür • 3.0 sn düşünme • seviye seviye zorlaşır")
 if selected_type == "lucky_pick":
-    st.caption("7 renk • 5.0 sn seçim • tek oyun")
+    st.caption("7 renk • 5.0 sn seçim • her videoda yeni neon labirent • tek oyun")
 if selected_type == "hidden_motion_hunt":
     st.caption("Moving hidden objects • 18.0 sn continuous loop • no reveal")
+if selected_type == "bounce_arena":
+    st.caption("6 colors • 5.0 sn Pick One • deterministic arena physics")
 count = st.selectbox("Number of videos", [1, 3, 5, 10, 30])
 quality = st.selectbox("Quality", ["Draft", "Final"]).lower()
 seed_text = st.text_input("Optional Seed", placeholder="Boş = otomatik")
@@ -183,27 +198,28 @@ seed_text = st.text_input("Optional Seed", placeholder="Boş = otomatik")
 if selected_type == "mixed":
     assert difficulty is not None
     challenge_summary = challenges or "1 veya 4–5 (Auto, türe göre)"
-    durations = [(MEMORY_INTRO_DURATION + round_duration(kind, difficulty) + OUTRO_DURATION) if kind == "memory_challenge"
-                 else (LUCKY_INTRO_DURATION + round_duration(kind, None) + OUTRO_DURATION) if kind == "lucky_pick"
-                 else (FLASH_INTRO_DURATION if kind == "flash_count" else INTRO_DURATION)
-                 + (challenges or default) * round_duration(kind, difficulty) + OUTRO_DURATION
-                 for kind, default in DEFAULT_ROUNDS.items() if kind not in ("line_follow", "hidden_motion_hunt")]
+    durations = [(sum(intro_outro(kind, difficulty)) + round_duration(kind, difficulty)) if kind == "memory_challenge"
+                 else (sum(intro_outro(kind, None)) + round_duration(kind, None)) if kind == "lucky_pick"
+                 else sum(intro_outro(kind, difficulty)) + (challenges or default) * round_duration(kind, difficulty)
+                 for kind, default in DEFAULT_ROUNDS.items() if kind not in ("line_follow", "hidden_motion_hunt", "bounce_arena")]
     duration_summary = f"~{min(durations):.1f}–{max(durations):.1f} sn"
 else:
     if selected_type == "memory_challenge":
-        challenge_summary = "4 recall + final reveal"
-        duration_summary = f"~{MEMORY_INTRO_DURATION + round_duration(selected_type, difficulty) + OUTRO_DURATION:.1f} sn"
+        challenge_summary = "8 recall + final reveal"
+        duration_summary = f"~{sum(intro_outro(selected_type, difficulty)) + round_duration(selected_type, difficulty):.1f} sn"
     elif selected_type == "lucky_pick":
         challenge_summary = "1 game"
-        duration_summary = f"~{LUCKY_INTRO_DURATION + round_duration(selected_type, None) + OUTRO_DURATION:.1f} sn"
+        duration_summary = f"~{sum(intro_outro(selected_type, None)) + round_duration(selected_type, None):.1f} sn"
     elif selected_type == "hidden_motion_hunt":
         challenge_summary = "7 moving objects"
         duration_summary = f"{HIDDEN_MOTION_DURATION:.1f} sn"
+    elif selected_type == "bounce_arena":
+        challenge_summary = "1 game"
+        duration_summary = "≤30.0 sn (doğal fiziğe göre)"
     else:
         effective = challenges or DEFAULT_ROUNDS[selected_type]
         challenge_summary = effective
-        intro = FLASH_INTRO_DURATION if selected_type == "flash_count" else INTRO_DURATION
-        duration_summary = f"~{intro + effective * round_duration(selected_type, difficulty) + OUTRO_DURATION:.1f} sn"
+        duration_summary = f"~{sum(intro_outro(selected_type, difficulty)) + effective * round_duration(selected_type, difficulty):.1f} sn"
 st.info(f"Type: {selected_type_label}  •  Challenges: {challenge_summary}  •  Estimated duration: {duration_summary}  •  Quality: {quality.title()}")
 
 left, right = st.columns(2)
@@ -222,8 +238,8 @@ if single_clicked or batch_clicked:
 
         def update_progress(index: int, total: int, spec, state: str) -> None:
             label = "tamamlandı" if state == "complete" else "işleniyor"
-            challenge_text = ("4 recall" if spec.puzzle_type == "memory_challenge" else
-                              ("1 game" if spec.puzzle_type == "lucky_pick" else
+            challenge_text = ("8 recall" if spec.puzzle_type == "memory_challenge" else
+                              ("1 game" if spec.puzzle_type in ("lucky_pick", "bounce_arena") else
                                ("7 moving objects" if spec.puzzle_type == "hidden_motion_hunt" else f"{spec.round_count} challenge")))
             status.info(f"{index}/{total} • {spec.puzzle_type} • {challenge_text} • {label} • {time.perf_counter() - started:.1f} sn")
             progress_bar.progress((index if state == "complete" else index - 1) / total)
@@ -232,10 +248,23 @@ if single_clicked or batch_clicked:
         specs = generate_unique_specs(requested_count, selected_type, difficulty or "easy", theme, base_seed,
                                       operation=operation, challenges=challenges, background_bytes=background_bytes,
                                       placement_mode=placement_mode, manual_objects=manual_objects)
-        batch_dir, videos = render_batch(specs, quality=quality, progress=update_progress)
+        if quality == "draft":
+            batch_dir, previews = render_draft_previews(specs, progress=update_progress)
+            videos = [preview.video_path for preview in previews]
+            st.session_state["draft_previews"] = previews
+            st.session_state["draft_saved"] = {}
+            st.session_state["draft_final_paths"] = {}
+        else:
+            batch_dir, videos = render_batch(specs, quality=quality, progress=update_progress)
+            st.session_state.pop("draft_previews", None)
         progress_bar.progress(1.0)
-        status.success(f"Tamamlandı: {batch_dir} • {time.perf_counter() - started:.1f} sn")
-        st.session_state["videos"], st.session_state["batch_dir"] = [str(path) for path in videos], str(batch_dir)
+        if quality == "draft":
+            status.success(
+                f"Draft önizleme hazır • output klasörüne kaydedilmedi • {time.perf_counter() - started:.1f} sn")
+            st.session_state["videos"], st.session_state["batch_dir"] = [], str(batch_dir)
+        else:
+            status.success(f"Tamamlandı: {batch_dir} • {time.perf_counter() - started:.1f} sn")
+            st.session_state["videos"], st.session_state["batch_dir"] = [str(path) for path in videos], str(batch_dir)
     except ValueError as exc:
         message = str(exc)
         st.error(message if selected_type == "hidden_motion_hunt" else "Seed yalnızca tam sayı olmalıdır.")
@@ -243,12 +272,79 @@ if single_clicked or batch_clicked:
         LOGGER.exception("Generation failed")
         st.error(f"Video üretilemedi: {exc}")
 
+if st.session_state.get("draft_previews"):
+    st.subheader("Draft önizlemeler")
+    st.caption("Bu dosyalar geçici önizlemedir; Kaydet düğmesine basılmadan output klasörüne ve geçmişe eklenmez.")
+    saved = st.session_state.setdefault("draft_saved", {})
+    final_paths = st.session_state.setdefault("draft_final_paths", {})
+    for index, preview in enumerate(st.session_state["draft_previews"]):
+        key = f"{preview.spec.id}-{index}"
+        st.video(str(preview.video_path))
+        st.caption(f"Seed: {preview.spec.seed} • {preview.spec.puzzle_type} • geçici Draft")
+        save_col, final_col = st.columns(2)
+        if save_col.button("Draft'ı Kaydet", key=f"save-draft-{key}",
+                           disabled=key in saved, use_container_width=True):
+            try:
+                record, saved_path = save_draft_preview(preview)
+                saved[key] = record.sequence_no
+                st.success(f"Draft kaydedildi: {saved_path}")
+            except Exception as exc:
+                LOGGER.exception("Draft save failed")
+                st.error(f"Draft kaydedilemedi: {exc}")
+        if final_col.button("Final Olarak Üret", key=f"final-draft-{key}",
+                            disabled=key in final_paths, use_container_width=True):
+            try:
+                history = HistoryStore()
+                if key in saved:
+                    record = history.record(int(saved[key]))
+                    if record is None:
+                        raise ValueError("Kaydedilmiş Draft geçmişte bulunamadı.")
+                    final_path = rerender_record_final(record, history=history)
+                else:
+                    _, paths = render_batch([preview.spec], quality="final", history=history)
+                    final_path = paths[0]
+                    record = history.records()[-1]
+                    saved[key] = record.sequence_no
+                final_paths[key] = str(final_path)
+                st.success(f"Final üretildi: {final_path}")
+            except Exception as exc:
+                LOGGER.exception("Draft final render failed")
+                st.error(f"Final üretilemedi: {exc}")
+        if key in saved:
+            st.caption(f"History sequence: PZ_{int(saved[key]):04d}")
+        if key in final_paths:
+            st.caption(f"Final: {final_paths[key]}")
+
 if st.session_state.get("videos"):
     st.subheader("Üretilen videolar")
     for video_path in st.session_state["videos"]:
         st.video(video_path)
         cover_path = str(Path(video_path).with_suffix(".jpg"))
         st.caption(f"Video: {video_path}\n\nCover: {cover_path}")
+
+history_records = [record for record in HistoryStore().records() if record.output_filename]
+if history_records:
+    with st.expander("Kaydedilmiş videoyu Final olarak yeniden üret"):
+        selected_sequence = st.selectbox(
+            "Kaydedilmiş video",
+            [record.sequence_no for record in reversed(history_records)],
+            format_func=lambda sequence: next(
+                f"PZ_{record.sequence_no:04d} • {record.puzzle_type} • {record.quality or 'eski kayıt'}"
+                for record in history_records if record.sequence_no == sequence),
+        )
+        st.markdown("Kayıtlı VideoSpec ve seed kullanılır; yeni bulmaca oluşturulmaz.")
+        if st.button("Seçili Videoyu Final Yeniden Üret", use_container_width=True):
+            try:
+                history = HistoryStore()
+                record = history.record(int(selected_sequence))
+                if record is None:
+                    raise ValueError("Video geçmiş kaydı bulunamadı.")
+                final_path = rerender_record_final(record, history=history)
+                st.success(f"Final hazır: {final_path}")
+                st.video(str(final_path))
+            except Exception as exc:
+                LOGGER.exception("Saved video final rerender failed")
+                st.error(f"Final yeniden üretilemedi: {exc}")
 
 if os.name == "nt" and st.button("Çıktı klasörünü aç"):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

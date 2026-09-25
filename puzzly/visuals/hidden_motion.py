@@ -6,10 +6,13 @@ from io import BytesIO
 
 from PIL import Image, ImageDraw, ImageOps
 
+from ..config import HIDDEN_MOTION_DURATION
 from ..puzzles.hidden_motion_hunt import (background_path, final_anchor, motion_state,
                                           object_asset_path, raster_dimension,
                                           runtime_object, scale_final_pixels)
+from .layout import scale_point
 from .memory import token_image
+from .text import draw_cta
 
 
 @lru_cache(maxsize=4)
@@ -52,6 +55,14 @@ def draw_hidden_motion(item, t: float, size: tuple[int, int]) -> Image.Image:
     for obj in data["objects"]:
         x, y, _ = motion_state(obj, t)
         _paste_object(image, obj, x, y, float(obj["diameter"]))
+    overlay_start = HIDDEN_MOTION_DURATION - 1.35
+    overlay_end = HIDDEN_MOTION_DURATION - .20
+    if overlay_start <= t <= overlay_end:
+        age = t - overlay_start
+        opacity = min(1.0, age / .22, (overlay_end - t) / .22)
+        scale = size[0] / 1080
+        draw_cta(image, scale_point((540, 1580), size), max(1, round(48 * scale)),
+                 "#FFFFFF", "#183943", round(230 * max(0.0, opacity)))
     return image
 
 

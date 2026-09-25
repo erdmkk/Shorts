@@ -23,6 +23,8 @@ class GenerationRecord:
     created_at: str
     output_filename: str
     cover_filename: str
+    spec_json: str = ""
+    quality: str = ""
 
 
 class HistoryStore:
@@ -75,6 +77,11 @@ class HistoryStore:
                 );
                 """
             )
+            columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(generations)")}
+            if "spec_json" not in columns:
+                connection.execute("ALTER TABLE generations ADD COLUMN spec_json TEXT NOT NULL DEFAULT ''")
+            if "quality" not in columns:
+                connection.execute("ALTER TABLE generations ADD COLUMN quality TEXT NOT NULL DEFAULT ''")
         self._migrate_legacy_json()
 
     def _legacy_max_sequence(self) -> int:
@@ -143,6 +150,8 @@ class HistoryStore:
         seed: int,
         fingerprint: str,
         finalize_files: Callable[[int], tuple[str, str]],
+        spec_json: str = "",
+        quality: str = "",
     ) -> GenerationRecord:
         """Assign a sequence and commit only after both output files are finalized."""
         created_at = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -154,16 +163,35 @@ class HistoryStore:
             output_filename, cover_filename = finalize_files(sequence_no)
             cursor = connection.execute(
                 """INSERT INTO generations
-                (sequence_no, puzzle_type, difficulty, seed, fingerprint, created_at, output_filename, cover_filename)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (sequence_no, puzzle_type, difficulty or "", seed, fingerprint, created_at, output_filename, cover_filename),
+                (sequence_no, puzzle_type, difficulty, seed, fingerprint, created_at, output_filename, cover_filename,
+                 spec_json, quality)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (sequence_no, puzzle_type, difficulty or "", seed, fingerprint, created_at, output_filename,
+                 cover_filename, spec_json, quality),
             )
             connection.execute("UPDATE sequence_state SET last_sequence=? WHERE singleton=1", (sequence_no,))
             generation_id = int(cursor.lastrowid)
-        return GenerationRecord(generation_id, sequence_no, puzzle_type, difficulty or "", seed, fingerprint,
-                                created_at, output_filename, cover_filename)
+        return GenerationRecord(
+            generation_id, sequence_no, puzzle_type, difficulty or "", seed, fingerprint,
+            created_at, output_filename, cover_filename, spec_json, quality,
+        )
 
     def records(self) -> list[GenerationRecord]:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM generations ORDER BY sequence_no").fetchall()
         return [GenerationRecord(**dict(row)) for row in rows]
+
+    def record(self, sequence_no: int) -> GenerationRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM generations WHERE sequence_no=?", (sequence_no,)).fetchone()
+        return GenerationRecord(**dict(row)) if row is not None else None
+
+    def update_render(self, sequence_no: int, *, spec_json: str, quality: str) -> None:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE generations SET spec_json=?, quality=? WHERE sequence_no=?",
+                (spec_json, quality, sequence_no),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"Unknown generation sequence: {sequence_no}")

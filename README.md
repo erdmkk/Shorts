@@ -1,6 +1,6 @@
 # Puzzly Shorts Generator V8.1
 
-Puzzly for Kids için konuşmasız ve dil bağımsız videoları bilgisayarınızda üretir. Quick Math, Missing Number, Puzzle Fit, Find the Exit, Memory Challenge, Flash Count ve zorluk seçimi gerektirmeyen tek oyunluk Lucky Pick aktiftir. Line Follow kodu korunur ancak deneysel olduğu için üretim menülerinde kapalıdır. Karışık mod yalnızca aktif türleri kullanır; ücretli API veya elle düzenleme gerekmez.
+Puzzly for You için konuşmasız ve dil bağımsız videoları bilgisayarınızda üretir. Quick Math, Missing Number, Puzzle Fit, Find the Exit, Memory Challenge, Flash Count ve zorluk seçimi gerektirmeyen tek oyunluk Lucky Pick aktiftir. Line Follow kodu korunur ancak deneysel olduğu için üretim menülerinde kapalıdır. Karışık mod yalnızca aktif türleri kullanır; ücretli API veya elle düzenleme gerekmez.
 
 V7 ile Easy/Medium/Hard arka planları sırasıyla açık mint, gök mavisi ve lavanta-pembe olarak standartlaştırılmıştır. Quick Math farklı bilinmeyen konumları; Missing Number toplama, çıkarma ve uygun zorluklarda çarpma dizilerini kullanır. Puzzle Fit Hard dört seçenek ve 5 saniye düşünme süresi sunar. Sesler yerel olarak 48 kHz üretilir ve kesilme tıklarını önleyen kısa geçişlerle güvenli biçimde karıştırılır.
 
@@ -11,6 +11,8 @@ Windows 10/11 ve Python 3.11+ gerekir. İlk kullanımda internet bağlantısıyl
 ## Çalıştırma ve üretim
 
 `run.bat` dosyasına çift tıklayın. Tarayıcıda tür, Easy/Medium/Hard zorluk, Quick Math işlemi, challenge sayısı, video adedi ve Draft/Final kalitesini seçin. İsterseniz tekrarlanabilir bir seed girin; ardından `1 Video Üret` veya `Toplu Video Üret` düğmesine basın.
+
+Draft seçildiğinde video yalnızca geçici önizleme olarak hazırlanır; `output` klasörüne veya üretim geçmişine otomatik eklenmez. İlgili önizlemenin altındaki `Draft'ı Kaydet` düğmesi Draft dosyasını yayınlama klasörüne kaydeder. `Final Olarak Üret` aynı bulmacayı değiştirmeden Final kalitesinde üretir. Daha önce kaydedilmiş bir video için sayfanın altındaki `Kaydedilmiş videoyu Final olarak yeniden üret` bölümünü kullanın.
 
 Auto: Quick Math, Missing Number ve Puzzle Fit için 5 tur; Find the Exit ve Line Follow için 4 tur kullanır. Bu türlerde 3, 4 veya 5 tur da seçebilirsiniz. Memory Challenge ise her zaman tek bir 5 şekilli renk panosu gösterir: 3 saniye ezberleme, dört adet 3 saniyelik hafıza sorusu ve beklemeden açılan son şekil. Memory seçiliyken challenge sayısı otomatik gizlenir. Easy/Medium/Hard zorluğu şekil sayısını değil renk benzerliğini değiştirir. Süre otomatik hesaplanır. Draft hızlı kontrol; Final ise daha yavaş, 2× örneklemeli 1080×1920 / 30 FPS kaliteli çıktı içindir.
 

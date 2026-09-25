@@ -13,3 +13,5 @@ data/hidden_motion_objects/
 assets/audio/generated/*
 !assets/audio/generated/.gitkeep
 data/*.tmp
+data/draft_previews/
+*TEMP_MPY_*

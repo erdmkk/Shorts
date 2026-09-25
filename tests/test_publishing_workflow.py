@@ -4,7 +4,9 @@ from pathlib import Path
 from PIL import Image
 import pytest
 
-from puzzly.generator import generate_spec, generate_unique_specs, render_batch
+from puzzly.generator import (generate_spec, generate_unique_specs, render_batch,
+                              render_draft_previews, rerender_record_final,
+                              save_draft_preview, spec_for_record)
 from puzzly.history import HistoryStore
 from puzzly.renderer import save_cover
 
@@ -93,3 +95,68 @@ def test_legacy_json_migration_is_backed_up_once(tmp_path) -> None:
     assert store.last_sequence() == 7
     assert legacy.with_name("history.json.backup-before-sqlite").read_bytes() == legacy.read_bytes()
     assert HistoryStore(store.path, legacy_path=legacy, legacy_output_dir=old_output).last_sequence() == 7
+
+
+def test_draft_preview_is_not_published_until_save(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("puzzly.generator.render_video", _fake_render)
+    monkeypatch.setattr("puzzly.generator.save_cover", _fake_cover)
+    history = HistoryStore(tmp_path / "generation_history.sqlite")
+    spec = generate_spec("quick_math", 404, "easy", challenges=3)
+
+    preview_dir, previews = render_draft_previews([spec], preview_root=tmp_path / "previews")
+    assert preview_dir.is_dir() and previews[0].video_path.is_file()
+    assert history.records() == []
+    assert not (tmp_path / "output").exists()
+
+    record, saved_path = save_draft_preview(
+        previews[0], output_dir=tmp_path / "output", history=history)
+    assert saved_path.is_file() and saved_path.with_suffix(".jpg").is_file()
+    assert record.quality == "draft"
+    assert spec_for_record(record, tmp_path / "output") == spec
+    assert len(history.records()) == 1
+
+
+def test_saved_draft_rerenders_final_in_place_with_same_spec(tmp_path, monkeypatch) -> None:
+    qualities: list[tuple[str, str]] = []
+
+    def tracked_render(spec, path: Path, **kwargs) -> float:
+        quality = kwargs["quality"]
+        qualities.append((quality, spec.fingerprint()))
+        path.write_bytes(quality.encode())
+        return 0.02
+
+    monkeypatch.setattr("puzzly.generator.render_video", tracked_render)
+    monkeypatch.setattr("puzzly.generator.save_cover", _fake_cover)
+    history = HistoryStore(tmp_path / "generation_history.sqlite")
+    spec = generate_spec("missing_number", 505, "medium", challenges=3)
+    _, previews = render_draft_previews([spec], preview_root=tmp_path / "previews")
+    record, draft_path = save_draft_preview(
+        previews[0], output_dir=tmp_path / "output", history=history)
+
+    final_path = rerender_record_final(record, output_root=tmp_path / "output", history=history)
+    updated = history.record(record.sequence_no)
+    assert final_path == draft_path and final_path.read_bytes() == b"final"
+    assert updated is not None and updated.quality == "final"
+    assert updated.sequence_no == record.sequence_no and len(history.records()) == 1
+    assert spec_for_record(updated, tmp_path / "output") == spec
+    assert qualities == [("draft", spec.fingerprint()), ("final", spec.fingerprint())]
+
+
+def test_old_history_record_recovers_exact_content_from_manifest(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("puzzly.generator.render_video", _fake_render)
+    monkeypatch.setattr("puzzly.generator.save_cover", _fake_cover)
+    history = HistoryStore(tmp_path / "generation_history.sqlite")
+    spec = generate_spec("quick_math", 606, "hard", operation="multiplication", challenges=3)
+    render_batch([spec], output_dir=tmp_path / "output", history=history)
+    record = history.records()[0]
+    with history._connect() as connection:
+        connection.execute(
+            "UPDATE generations SET spec_json='', quality='' WHERE sequence_no=?",
+            (record.sequence_no,),
+        )
+    old_record = history.record(record.sequence_no)
+    assert old_record is not None and old_record.spec_json == ""
+    recovered = spec_for_record(old_record, tmp_path / "output")
+    assert recovered.seed == spec.seed
+    assert recovered.rounds == spec.rounds
+    assert recovered.fingerprint() == spec.fingerprint()

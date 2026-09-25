@@ -60,3 +60,25 @@ class VideoSpec:
         result = asdict(self)
         result["total_duration"] = self.total_duration
         return result
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "VideoSpec":
+        rounds = tuple(RoundSpec(**item) for item in payload["rounds"])
+        return cls(
+            id=str(payload["id"]), puzzle_type=str(payload["puzzle_type"]),
+            seed=int(payload["seed"]), difficulty=payload.get("difficulty"),
+            theme=str(payload["theme"]), rounds=rounds,
+            intro_duration=float(payload["intro_duration"]),
+            round_duration=float(payload["round_duration"]),
+            outro_duration=float(payload["outro_duration"]),
+            operation=str(payload.get("operation", "mixed")),
+            fps=int(payload.get("fps", FPS)),
+            metadata=dict(payload.get("metadata", {})),
+        )
+
+    @classmethod
+    def from_json(cls, payload: str) -> "VideoSpec":
+        return cls.from_dict(json.loads(payload))

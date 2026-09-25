@@ -9,7 +9,7 @@ from .easing import ease_in_out, ease_out_back
 from .effects import draw_progress_bar, draw_sparkles, rounded_surface
 from .layout import scale_point
 from .memory import token_image
-from .text import font
+from .text import display_font, font
 
 INTRO_POSITIONS = ((315, 500), (575, 470), (785, 590), (265, 780), (515, 735), (755, 850))
 COVER_BOUNDS = (115, 280, 965, 1380)
@@ -55,7 +55,7 @@ def draw_flash_intro(image: Image.Image, spec: VideoSpec, t: float, palette: dic
     identity = spec.rounds[0].data
     amount = ease_out_back(t / FLASH_APPEARANCE_DURATION)
     draw = ImageDraw.Draw(image)
-    draw.text(scale_point((540, 250), image.size), "How many?", font=font(_scaled(70, image.size)),
+    draw.text(scale_point((540, 250), image.size), "How many?", font=display_font(_scaled(70, image.size)),
               fill=palette["text_dark"], anchor="mm")
     for center in INTRO_POSITIONS:
         _paste(image, identity["shape_id"], identity["color_value"], center, 176, amount)

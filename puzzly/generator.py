@@ -1,21 +1,28 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import csv
+from dataclasses import dataclass
 from datetime import datetime
 import json
 import logging
 from pathlib import Path
 import random
 import secrets
+import shutil
 from typing import Any
 from uuid import uuid4
 
-from .config import OUTPUT_DIR, ensure_directories
-from .history import HistoryStore
+from .config import (BOUNCE_CTA_DURATION, DATA_DIR, FLASH_INTRO_DURATION, HIDDEN_MOTION_DURATION,
+                     INTRO_DURATION, LUCKY_INTRO_DURATION, OUTRO_DURATION,
+                     PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION,
+                     OUTPUT_DIR, ensure_directories)
+from .history import GenerationRecord, HistoryStore
 from .metadata import write_manifest, youtube_metadata
-from .models import VideoSpec
-from .puzzles import flash_count, hidden_motion_hunt, lucky_pick, missing_number, puzzle_fit, quick_math, find_the_exit, line_follow, memory_challenge
+from .models import RoundSpec, VideoSpec
+from .puzzles import bounce_arena, cube_count, flash_count, hidden_motion_hunt, lucky_pick, missing_number, puzzle_fit, quick_math, find_the_exit, line_follow, memory_challenge
 from .registry import ACTIVE_PUZZLE_TYPES, MIXED_PUZZLE_TYPES, SUPPORTED_PUZZLE_TYPES
+from .memory_colors import COLOR_LEVEL_THEMES
 from .renderer import render_video, save_cover
 from .validation import validate_spec
 
@@ -31,7 +38,16 @@ THEMES = {
     "flash_count": ("geometric_tokens",),
     "lucky_pick": ("lucky_pick",),
     "hidden_motion_hunt": ("uploaded_background",),
+    "bounce_arena": ("bounce_arena",),
+    "cube_count": ("isometric_cubes",),
 }
+
+
+@dataclass(frozen=True)
+class DraftPreview:
+    spec: VideoSpec
+    video_path: Path
+    cover_path: Path
 
 
 def generate_spec(
@@ -49,6 +65,8 @@ def generate_spec(
         return spec
     rng = random.Random(f"{seed}:{puzzle_type}:{difficulty}")
     chosen_theme = rng.choice(THEMES[puzzle_type]) if theme == "auto" or theme not in THEMES[puzzle_type] else theme
+    if puzzle_type == "memory_challenge" and theme in COLOR_LEVEL_THEMES:
+        chosen_theme = theme  # colour similarity level picked in the UI
     factories = {
         "missing_number": missing_number.generate,
         "puzzle_fit": puzzle_fit.generate,
@@ -56,12 +74,16 @@ def generate_spec(
         "line_follow": line_follow.generate,
         "memory_challenge": memory_challenge.generate,
         "flash_count": flash_count.generate,
+        "cube_count": cube_count.generate,
         "lucky_pick": lucky_pick.generate,
+        "bounce_arena": bounce_arena.generate,
     }
     if puzzle_type == "quick_math":
         spec = quick_math.generate(seed, difficulty, operation, challenges)
     elif puzzle_type == "lucky_pick":
         spec = lucky_pick.generate(seed)
+    elif puzzle_type == "bounce_arena":
+        spec = bounce_arena.generate(seed)
     else:
         spec = factories[puzzle_type](seed, difficulty, chosen_theme, None if puzzle_type == "memory_challenge" else challenges)
     validate_spec(spec)
@@ -75,6 +97,12 @@ def mixed_types(count: int, rng: random.Random) -> list[str]:
     result = [cycle[index % len(cycle)] for index in range(count)]
     rng.shuffle(result)
     return result
+
+
+def output_stem(sequence_no: int, spec: VideoSpec) -> str:
+    no_difficulty = ("lucky_pick", "hidden_motion_hunt", "bounce_arena")
+    return (f"PZ_{sequence_no:04d}_{spec.puzzle_type}" if spec.puzzle_type in no_difficulty
+            else f"PZ_{sequence_no:04d}_{spec.puzzle_type}_{spec.difficulty}")
 
 
 def generate_unique_specs(
@@ -108,6 +136,85 @@ def generate_unique_specs(
     return specs
 
 
+def _manifest_row(
+    spec: VideoSpec, record: GenerationRecord, elapsed: float, quality: str,
+) -> dict[str, Any]:
+    meta = youtube_metadata(spec)
+    memory_data = spec.rounds[0].data if spec.puzzle_type == "memory_challenge" else {}
+    memory_tokens = memory_data.get("tokens", [])
+    flash_data = spec.rounds[0].data if spec.puzzle_type == "flash_count" else {}
+    lucky_data = spec.rounds[0].data if spec.puzzle_type == "lucky_pick" else {}
+    hidden_data = spec.rounds[0].data if spec.puzzle_type == "hidden_motion_hunt" else {}
+    bounce_data = spec.rounds[0].data if spec.puzzle_type == "bounce_arena" else {}
+    hidden_objects = hidden_data.get("objects", [])
+    return {
+        "filename": record.output_filename, "cover_filename": record.cover_filename,
+        "sequence_no": record.sequence_no, "video_id": spec.id, "puzzle_type": spec.puzzle_type,
+        "theme": spec.theme, "difficulty": spec.difficulty or "", "seed": spec.seed,
+        "quality": quality,
+        "question": json.dumps([round_spec.data for round_spec in spec.rounds], ensure_ascii=False),
+        "answer": json.dumps([round_spec.answer for round_spec in spec.rounds], ensure_ascii=False), **meta,
+        "round_count": spec.round_count, "duration_seconds": spec.total_duration,
+        "token_shapes": json.dumps([token.get("shape") for token in memory_tokens], ensure_ascii=False),
+        "color_ids": json.dumps([token.get("color_id") for token in memory_tokens], ensure_ascii=False),
+        "token_positions": json.dumps([token.get("position") for token in memory_tokens], ensure_ascii=False),
+        "question_order": json.dumps(memory_data.get("question_order", []), ensure_ascii=False),
+        "final_auto_reveal": memory_data.get("final_position", ""),
+        "shape_id": flash_data.get("shape_id", lucky_data.get("shape_id", "")),
+        "color_id": flash_data.get("color_id", ""),
+        "displayed_counts": json.dumps([item.data.get("displayed_count") if item.kind == "flash_count" else item.data.get("total")
+                                        for item in spec.rounds if item.kind in ("flash_count", "cube_count")]),
+        "flash_positions": json.dumps([item.data.get("positions") for item in spec.rounds if item.kind == "flash_count"]),
+        "circle_count": lucky_data.get("target_count", ""),
+        "lucky_color_ids": json.dumps([target.get("color_id") for target in lucky_data.get("targets", [])]),
+        "lucky_positions": json.dumps([target.get("position") for target in lucky_data.get("targets", [])]),
+        "winner_index": lucky_data.get("winner_index", ""), "winner_color": lucky_data.get("winner_color", ""),
+        "elimination_order": json.dumps(lucky_data.get("elimination_order", [])),
+        "corridor_template_id": lucky_data.get("corridor_template_id")
+        or (f"{lucky_data['map_version']}:{lucky_data['map_seed']}" if lucky_data.get("map_version") else ""),
+        "mirrored": lucky_data.get("mirrored", ""),
+        "target_terminal_mapping": json.dumps(lucky_data.get("targets", [])),
+        "equation_templates": json.dumps([item.data.get("equation_template") for item in spec.rounds if "equation_template" in item.data]),
+        "operations": json.dumps([item.data.get("operation") for item in spec.rounds if "operation" in item.data]),
+        "sequence_families": json.dumps([item.data.get("sequence_family") for item in spec.rounds if "sequence_family" in item.data]),
+        "steps_or_ratios": json.dumps([item.data.get("step_or_ratio") for item in spec.rounds if "step_or_ratio" in item.data]),
+        "background_hash": hidden_data.get("background_hash", ""),
+        "placement_mode": hidden_data.get("placement_mode", ""),
+        "object_count": hidden_data.get("object_count", ""),
+        "hidden_object_positions": json.dumps([item.get("position") for item in hidden_objects]),
+        "hidden_object_tiers": json.dumps([item.get("tier") for item in hidden_objects]),
+        "hidden_object_diameters": json.dumps([item.get("diameter") for item in hidden_objects]),
+        "hidden_object_shapes": json.dumps([item.get("shape") for item in hidden_objects]),
+        "hidden_object_colors": json.dumps([item.get("color") for item in hidden_objects]),
+        "hidden_object_jump_heights": json.dumps([item.get("jump_height_px") for item in hidden_objects]),
+        "hidden_object_bounce_speeds": json.dumps([item.get("bounce_speed") for item in hidden_objects]),
+        "hidden_object_sources": json.dumps([item.get("source_type") for item in hidden_objects]),
+        "hidden_object_png_hashes": json.dumps([item.get("png_asset_hash") for item in hidden_objects]),
+        "motion_parameters": json.dumps([{
+            "x_amplitude": item.get("x_amplitude"), "y_amplitude": item.get("y_amplitude"),
+            "scale_amplitude": item.get("scale_amplitude"), "cycles": item.get("cycles"),
+            "phase": item.get("phase"), "bounce_speed": item.get("bounce_speed"),
+        } for item in hidden_objects]),
+        "bounce_initial_positions": json.dumps(bounce_data.get("initial_positions", [])),
+        "bounce_initial_velocities": json.dumps(bounce_data.get("initial_velocities", [])),
+        "bounce_opening": json.dumps(bounce_data.get("arena", {})),
+        "bounce_elimination_order": json.dumps(bounce_data.get("elimination_order", [])),
+        "bounce_winner": bounce_data.get("winner", ""),
+        "bounce_simulation_duration": bounce_data.get("simulation_duration", ""),
+        "bounce_initial_condition_attempt": bounce_data.get("initial_condition_attempt", ""),
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "render_seconds": f"{elapsed:.2f}", "validation_status": "valid",
+    }
+
+
+def _write_manifests(batch_dir: Path, rows: list[dict[str, Any]], batch_stamp: str) -> None:
+    try:
+        write_manifest(batch_dir / "metadata.csv", rows)
+        write_manifest(batch_dir / f"metadata_{batch_stamp}.csv", rows)
+    except OSError:
+        LOGGER.warning("Video and cover succeeded but disposable metadata CSV could not be written", exc_info=True)
+
+
 def render_batch(
     specs: list[VideoSpec], quality: str = "final", output_dir: Path | None = None,
     history: HistoryStore | None = None,
@@ -132,8 +239,7 @@ def render_batch(
             save_cover(spec, temporary_cover)
 
             def finalize_files(sequence_no: int) -> tuple[str, str]:
-                stem = (f"PZ_{sequence_no:04d}_{spec.puzzle_type}" if spec.puzzle_type in ("lucky_pick", "hidden_motion_hunt")
-                        else f"PZ_{sequence_no:04d}_{spec.puzzle_type}_{spec.difficulty}")
+                stem = output_stem(sequence_no, spec)
                 video_path, cover_path = batch_dir / f"{stem}.mp4", batch_dir / f"{stem}.jpg"
                 if video_path.exists() or cover_path.exists():
                     raise FileExistsError(f"Output already exists for sequence {sequence_no}")
@@ -154,6 +260,8 @@ def render_batch(
                 seed=spec.seed,
                 fingerprint=spec.fingerprint(),
                 finalize_files=finalize_files,
+                spec_json=spec.to_json(),
+                quality=quality,
             )
         except Exception:
             for generated_path in finalized:
@@ -161,70 +269,197 @@ def render_batch(
             temporary_video.unlink(missing_ok=True)
             temporary_cover.unlink(missing_ok=True)
             raise
-        filename, cover_filename = record.output_filename, record.cover_filename
-        path = batch_dir / filename
-        meta = youtube_metadata(spec)
-        memory_data = spec.rounds[0].data if spec.puzzle_type == "memory_challenge" else {}
-        memory_tokens = memory_data.get("tokens", [])
-        flash_data = spec.rounds[0].data if spec.puzzle_type == "flash_count" else {}
-        lucky_data = spec.rounds[0].data if spec.puzzle_type == "lucky_pick" else {}
-        hidden_data = spec.rounds[0].data if spec.puzzle_type == "hidden_motion_hunt" else {}
-        hidden_objects = hidden_data.get("objects", [])
-        rows.append({
-            "filename": filename, "cover_filename": cover_filename, "sequence_no": record.sequence_no,
-            "video_id": spec.id, "puzzle_type": spec.puzzle_type,
-            "theme": spec.theme, "difficulty": spec.difficulty or "", "seed": spec.seed,
-            "question": json.dumps([round_spec.data for round_spec in spec.rounds], ensure_ascii=False),
-            "answer": json.dumps([round_spec.answer for round_spec in spec.rounds], ensure_ascii=False), **meta,
-            "round_count": spec.round_count, "duration_seconds": spec.total_duration,
-            "token_shapes": json.dumps([token.get("shape") for token in memory_tokens], ensure_ascii=False),
-            "color_ids": json.dumps([token.get("color_id") for token in memory_tokens], ensure_ascii=False),
-            "token_positions": json.dumps([token.get("position") for token in memory_tokens], ensure_ascii=False),
-            "question_order": json.dumps(memory_data.get("question_order", []), ensure_ascii=False),
-            "final_auto_reveal": memory_data.get("final_position", ""),
-            "shape_id": flash_data.get("shape_id", lucky_data.get("shape_id", "")),
-            "color_id": flash_data.get("color_id", ""),
-            "displayed_counts": json.dumps([item.data.get("displayed_count") for item in spec.rounds if item.kind == "flash_count"]),
-            "flash_positions": json.dumps([item.data.get("positions") for item in spec.rounds if item.kind == "flash_count"]),
-            "circle_count": lucky_data.get("target_count", ""),
-            "lucky_color_ids": json.dumps([target.get("color_id") for target in lucky_data.get("targets", [])]),
-            "lucky_positions": json.dumps([target.get("position") for target in lucky_data.get("targets", [])]),
-            "winner_index": lucky_data.get("winner_index", ""), "winner_color": lucky_data.get("winner_color", ""),
-            "elimination_order": json.dumps(lucky_data.get("elimination_order", [])),
-            "corridor_template_id": lucky_data.get("corridor_template_id", ""),
-            "mirrored": lucky_data.get("mirrored", ""),
-            "target_terminal_mapping": json.dumps(lucky_data.get("targets", [])),
-            "equation_templates": json.dumps([item.data.get("equation_template") for item in spec.rounds if "equation_template" in item.data]),
-            "operations": json.dumps([item.data.get("operation") for item in spec.rounds if "operation" in item.data]),
-            "sequence_families": json.dumps([item.data.get("sequence_family") for item in spec.rounds if "sequence_family" in item.data]),
-            "steps_or_ratios": json.dumps([item.data.get("step_or_ratio") for item in spec.rounds if "step_or_ratio" in item.data]),
-            "background_hash": hidden_data.get("background_hash", ""),
-            "placement_mode": hidden_data.get("placement_mode", ""),
-            "object_count": hidden_data.get("object_count", ""),
-            "hidden_object_positions": json.dumps([item.get("position") for item in hidden_objects]),
-            "hidden_object_tiers": json.dumps([item.get("tier") for item in hidden_objects]),
-            "hidden_object_diameters": json.dumps([item.get("diameter") for item in hidden_objects]),
-            "hidden_object_shapes": json.dumps([item.get("shape") for item in hidden_objects]),
-            "hidden_object_colors": json.dumps([item.get("color") for item in hidden_objects]),
-            "hidden_object_jump_heights": json.dumps([item.get("jump_height_px") for item in hidden_objects]),
-            "hidden_object_bounce_speeds": json.dumps([item.get("bounce_speed") for item in hidden_objects]),
-            "hidden_object_sources": json.dumps([item.get("source_type") for item in hidden_objects]),
-            "hidden_object_png_hashes": json.dumps([item.get("png_asset_hash") for item in hidden_objects]),
-            "motion_parameters": json.dumps([{"x_amplitude": item.get("x_amplitude"),
-                                               "y_amplitude": item.get("y_amplitude"),
-                                               "scale_amplitude": item.get("scale_amplitude"),
-                                               "cycles": item.get("cycles"), "phase": item.get("phase"),
-                                               "bounce_speed": item.get("bounce_speed")}
-                                              for item in hidden_objects]),
-            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "render_seconds": f"{elapsed:.2f}", "validation_status": "valid",
-        })
+        path = batch_dir / record.output_filename
+        rows.append(_manifest_row(spec, record, elapsed, quality))
         outputs.append(path)
-        try:
-            write_manifest(batch_dir / "metadata.csv", rows)
-            write_manifest(batch_dir / f"metadata_{batch_stamp}.csv", rows)
-        except OSError:
-            LOGGER.warning("Video and cover succeeded but disposable metadata CSV could not be written", exc_info=True)
+        _write_manifests(batch_dir, rows, batch_stamp)
         if progress:
             progress(position, len(specs), spec, "complete")
     return batch_dir, outputs
+
+
+def render_draft_previews(
+    specs: list[VideoSpec],
+    progress: Callable[[int, int, VideoSpec, str], None] | None = None,
+    preview_root: Path | None = None,
+) -> tuple[Path, list[DraftPreview]]:
+    """Render disposable Draft previews without publishing or touching history."""
+    ensure_directories()
+    preview_dir = (preview_root or DATA_DIR / "draft_previews") / uuid4().hex
+    preview_dir.mkdir(parents=True, exist_ok=False)
+    previews: list[DraftPreview] = []
+    try:
+        for position, spec in enumerate(specs, start=1):
+            if progress:
+                progress(position, len(specs), spec, "rendering")
+            video_path = preview_dir / f"draft_preview_{position:02d}.mp4"
+            cover_path = preview_dir / f"draft_preview_{position:02d}.jpg"
+            render_video(spec, video_path, quality="draft", logger=None)
+            save_cover(spec, cover_path)
+            previews.append(DraftPreview(spec, video_path, cover_path))
+            if progress:
+                progress(position, len(specs), spec, "complete")
+    except Exception:
+        shutil.rmtree(preview_dir, ignore_errors=True)
+        raise
+    return preview_dir, previews
+
+
+def save_draft_preview(
+    preview: DraftPreview, output_dir: Path | None = None, history: HistoryStore | None = None,
+) -> tuple[GenerationRecord, Path]:
+    """Publish an already-rendered Draft only after the user explicitly saves it."""
+    if not preview.video_path.is_file() or not preview.cover_path.is_file():
+        raise FileNotFoundError("Draft preview files are no longer available")
+    history = history or HistoryStore()
+    batch_dir = output_dir or OUTPUT_DIR / datetime.now().strftime("%Y-%m-%d")
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    temporary_stem = f".puzzly-save-{uuid4().hex}"
+    temporary_video = batch_dir / f"{temporary_stem}.mp4"
+    temporary_cover = batch_dir / f"{temporary_stem}.jpg"
+    shutil.copy2(preview.video_path, temporary_video)
+    shutil.copy2(preview.cover_path, temporary_cover)
+    finalized: list[Path] = []
+
+    def finalize_files(sequence_no: int) -> tuple[str, str]:
+        stem = output_stem(sequence_no, preview.spec)
+        video_path, cover_path = batch_dir / f"{stem}.mp4", batch_dir / f"{stem}.jpg"
+        if video_path.exists() or cover_path.exists():
+            raise FileExistsError(f"Output already exists for sequence {sequence_no}")
+        temporary_video.replace(video_path)
+        finalized.append(video_path)
+        try:
+            temporary_cover.replace(cover_path)
+        except Exception:
+            video_path.replace(temporary_video)
+            finalized.clear()
+            raise
+        finalized.append(cover_path)
+        return video_path.name, cover_path.name
+
+    try:
+        record = history.commit_success(
+            puzzle_type=preview.spec.puzzle_type, difficulty=preview.spec.difficulty,
+            seed=preview.spec.seed, fingerprint=preview.spec.fingerprint(),
+            finalize_files=finalize_files, spec_json=preview.spec.to_json(), quality="draft",
+        )
+    except Exception:
+        for path in finalized:
+            path.unlink(missing_ok=True)
+        temporary_video.unlink(missing_ok=True)
+        temporary_cover.unlink(missing_ok=True)
+        raise
+    _write_manifests(
+        batch_dir, [_manifest_row(preview.spec, record, 0.0, "draft")],
+        datetime.now().strftime("%H%M%S_%f"),
+    )
+    return record, batch_dir / record.output_filename
+
+
+def _spec_from_manifest(record: GenerationRecord, output_root: Path) -> VideoSpec | None:
+    manifests = sorted(output_root.rglob("metadata_*.csv"), reverse=True)
+    manifests.extend(sorted(output_root.rglob("metadata.csv"), reverse=True))
+    for manifest in manifests:
+        try:
+            with manifest.open(encoding="utf-8-sig", newline="") as handle:
+                row = next((item for item in csv.DictReader(handle)
+                            if item.get("filename") == record.output_filename), None)
+            if row is None:
+                continue
+            round_data = json.loads(row["question"])
+            answers = json.loads(row["answer"])
+            if not isinstance(round_data, list) or not isinstance(answers, list) or len(round_data) != len(answers):
+                continue
+            puzzle_type = row["puzzle_type"]
+            rounds = tuple(RoundSpec(index, puzzle_type, data, answers[index])
+                           for index, data in enumerate(round_data))
+            total = float(row["duration_seconds"])
+            if puzzle_type == "hidden_motion_hunt":
+                intro, outro = 0.0, 0.0
+            elif puzzle_type == "bounce_arena":
+                intro, outro = 0.0, BOUNCE_CTA_DURATION
+            elif puzzle_type == "lucky_pick" and not (round_data and round_data[0].get("map_version")):
+                intro, outro = LUCKY_INTRO_DURATION, OUTRO_DURATION  # older corridor-template videos
+            elif puzzle_type == "flash_count":
+                intro, outro = FLASH_INTRO_DURATION, OUTRO_DURATION
+            elif puzzle_type in ("puzzle_fit", "cube_count", "memory_challenge", "lucky_pick") or (
+                    puzzle_type == "quick_math" and round_data and round_data[0].get("format")) or (puzzle_type == "find_the_exit"
+                                                   and round_data and round_data[0].get("layout") == "deceptive_v2"):
+                intro, outro = PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION
+            else:
+                intro, outro = INTRO_DURATION, OUTRO_DURATION
+            round_duration_value = (total - intro - outro) / max(1, len(rounds))
+            operation = "mixed"
+            if puzzle_type == "quick_math":
+                operations = json.loads(row.get("operations") or "[]")
+                unique_operations = {str(value) for value in operations if value}
+                if len(unique_operations) == 1:
+                    operation = unique_operations.pop()
+            return VideoSpec(
+                row["video_id"], puzzle_type, int(row["seed"]), row.get("difficulty") or None,
+                row.get("theme") or "auto", rounds, intro, round_duration_value, outro,
+                operation=operation,
+            )
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def spec_for_record(record: GenerationRecord, output_root: Path = OUTPUT_DIR) -> VideoSpec:
+    if record.spec_json:
+        return VideoSpec.from_json(record.spec_json)
+    recovered = _spec_from_manifest(record, output_root)
+    if recovered is None:
+        raise ValueError("Bu eski kayıt için birebir VideoSpec bulunamadı; metadata dosyası gerekli.")
+    return recovered
+
+
+def rerender_record_final(
+    record: GenerationRecord, *, output_root: Path = OUTPUT_DIR, history: HistoryStore | None = None,
+) -> Path:
+    """Atomically replace a saved Draft with a Final render using the exact stored spec."""
+    history = history or HistoryStore()
+    spec = spec_for_record(record, output_root)
+    matches = list(output_root.rglob(record.output_filename)) if output_root.exists() else []
+    target_video = matches[0] if matches else output_root / datetime.now().strftime("%Y-%m-%d") / record.output_filename
+    target_video.parent.mkdir(parents=True, exist_ok=True)
+    target_cover = target_video.with_name(record.cover_filename)
+    token = uuid4().hex
+    temporary_video = target_video.parent / f".puzzly-final-{token}.mp4"
+    temporary_cover = target_video.parent / f".puzzly-final-{token}.jpg"
+    backup_video = target_video.parent / f".puzzly-backup-{token}.mp4"
+    backup_cover = target_video.parent / f".puzzly-backup-{token}.jpg"
+    elapsed = render_video(spec, temporary_video, quality="final", logger=None)
+    save_cover(spec, temporary_cover)
+    had_video = target_video.exists()
+    had_cover = target_cover.exists()
+    try:
+        if had_video:
+            shutil.copy2(target_video, backup_video)
+        if had_cover:
+            shutil.copy2(target_cover, backup_cover)
+        temporary_video.replace(target_video)
+        temporary_cover.replace(target_cover)
+        history.update_render(record.sequence_no, spec_json=spec.to_json(), quality="final")
+    except Exception:
+        if backup_video.exists():
+            backup_video.replace(target_video)
+        elif not had_video:
+            target_video.unlink(missing_ok=True)
+        if backup_cover.exists():
+            backup_cover.replace(target_cover)
+        elif not had_cover:
+            target_cover.unlink(missing_ok=True)
+        temporary_video.unlink(missing_ok=True)
+        temporary_cover.unlink(missing_ok=True)
+        raise
+    finally:
+        backup_video.unlink(missing_ok=True)
+        backup_cover.unlink(missing_ok=True)
+    updated = history.record(record.sequence_no)
+    assert updated is not None
+    _write_manifests(
+        target_video.parent, [_manifest_row(spec, updated, elapsed, "final")],
+        datetime.now().strftime("%H%M%S_%f"),
+    )
+    return target_video

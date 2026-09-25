@@ -13,21 +13,25 @@ from moviepy import AudioArrayClip, VideoClip
 
 from .audio import ensure_sound_effects, timeline_audio
 from .branding import draw_brand_mark
-from .config import AUDIO_RATE, FPS, LUCKY_PALETTE, RENDER_QUALITIES, ensure_directories, palette_for, thinking_duration
+from .config import AUDIO_RATE, FPS, LUCKY_PALETTE, RENDER_QUALITIES, ensure_directories, palette_for
 from .models import RoundSpec, VideoSpec
-from .puzzles.puzzle_fit import visual_state
 from .validation import validate_spec
 from .visuals.backgrounds import create_background
-from .visuals.jigsaw import piece_points
 from .visuals.paths import draw_path_puzzle
-from .visuals.memory import draw_memory_intro, draw_memory_round
+from .visuals.memory import COVER_TIME as MEMORY_COVER_TIME, draw_memory_frame
 from .visuals.flash_count import draw_flash_intro, draw_flash_round
-from .visuals.lucky_pick import draw_lucky_game, draw_lucky_intro
+from .visuals.lucky_pick import COVER_TIME as LUCKY_COVER_TIME, draw_lucky_frame
+from .visuals.quick_math import COVER_TIME as QUICK_MATH_COVER_TIME, draw_quick_math_frame
+from .visuals.puzzle_fit import use_theme
 from .visuals.hidden_motion import draw_hidden_motion
-from .visuals.easing import ease_in_out, ease_out_back, ease_out_cubic
+from .visuals.bounce_arena import COVER_TIME as BOUNCE_COVER_TIME, draw_bounce_frame
+from .visuals.puzzle_fit import COVER_TIME as PUZZLE_FIT_COVER_TIME, draw_puzzle_fit_frame
+from .visuals.find_the_exit import COVER_TIME as EXIT_HARD_COVER_TIME, draw_exit_hard_frame, uses_exit_hard_look
+from .visuals.cube_count import COVER_TIME as CUBE_COVER_TIME, draw_cube_frame
+from .visuals.easing import ease_in_out, ease_out_back
 from .visuals.effects import draw_progress_bar, draw_sparkles, rounded_card, rounded_surface
 from .visuals.layout import scale_point
-from .visuals.text import fitted_font, font
+from .visuals.text import display_font, draw_cta, fitted_font, font
 
 LOGGER = logging.getLogger(__name__)
 
@@ -78,43 +82,13 @@ def _scaled_card(image: Image.Image, logical: tuple[float, float, float, float],
     return bounds
 
 
-def _draw_puzzle_fit_intro(image: Image.Image, t: float, palette: dict[str, str]) -> None:
-    """Draw a fixed concept motif that cannot disclose a generated round."""
-    draw = ImageDraw.Draw(image)
-    size = image.size
-    draw.text(scale_point((540, 205), size), "PUZZLE FIT", font=font(_scaled(68, size)),
-              fill=palette["text_dark"], anchor="mm")
-    amount = max(.12, ease_out_back(t / .55))
-    cell = 210
-    left, top = 330, 365
-    pieces = (
-        ((left, top, left + cell, top + cell), [0, 1, 1, 0], palette["secondary"]),
-        ((left + cell, top, left + 2 * cell, top + cell), [0, 0, 1, -1], palette["accent"]),
-        ((left, top + cell, left + cell, top + 2 * cell), [-1, 1, 0, 0], palette["coral"]),
-    )
-    for logical, edges, color in pieces:
-        x1, y1, x2, y2 = logical
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-        half = cell * amount / 2
-        _jigsaw_piece(draw, _bounds((cx-half, cy-half, cx+half, cy+half), size), edges,
-                      color, palette["outline"], _scaled(5, size))
-    hole = (left + cell, top + cell, left + 2 * cell, top + 2 * cell)
-    hole_edges = [-1, 0, 0, -1]
-    _dashed_hole(draw, _bounds(hole, size), hole_edges, palette["background"],
-                 palette["primary"], _scaled(7, size))
-    candidate = _bounds((448, 865, 632, 1049), size)
-    shadow = tuple(value + _scaled(7, size) for value in candidate)
-    _jigsaw_piece(draw, shadow, hole_edges, palette["background_2"], palette["background_2"], _scaled(3, size))
-    _jigsaw_piece(draw, candidate, hole_edges, palette["success"], palette["outline"], _scaled(5, size))
-
-
 def _intro_frame(spec: VideoSpec, t: float, size: tuple[int, int], base: Image.Image) -> Image.Image:
     image = base.copy()
     palette = _palette(spec)
     progress = ease_out_back(t / 0.65)
     draw = ImageDraw.Draw(image)
     if spec.puzzle_type == "quick_math":
-        draw.text(scale_point((540, 220), size), "QUICK MATH", font=font(_scaled(68, size)),
+        draw.text(scale_point((540, 220), size), "QUICK MATH", font=display_font(_scaled(68, size)),
                   fill=palette["text_dark"], anchor="mm")
         for index, symbol in enumerate(("+", "−", "×", "÷")):
             x = 285 + index * 170
@@ -136,26 +110,12 @@ def _intro_frame(spec: VideoSpec, t: float, size: tuple[int, int], base: Image.I
         crop = tutorial.crop(_bounds((100, 280, 980, 1480), size))
         crop = crop.resize((_scaled(550, size), _scaled(750, size)), Image.Resampling.LANCZOS)
         image.paste(crop, scale_point((265, 240), size))
-    elif spec.puzzle_type == "memory_challenge":
-        draw_memory_intro(image, t, palette)
     elif spec.puzzle_type == "flash_count":
         draw_flash_intro(image, spec, t, palette)
-    elif spec.puzzle_type == "lucky_pick":
-        draw_lucky_intro(image, spec, t, palette)
-    elif spec.puzzle_type == "puzzle_fit":
-        _draw_puzzle_fit_intro(image, t, palette)
     if spec.puzzle_type in ("quick_math", "missing_number"):
         diameter = _scaled(210 * max(0.15, progress), size)
         draw_brand_mark(image, scale_point((540, 880), size), diameter, palette,
                         symbol=None if spec.puzzle_type == "quick_math" else "?")
-    show_badge = spec.puzzle_type != "memory_challenge" or t >= 1.08
-    if show_badge and spec.puzzle_type != "lucky_pick":
-        badge_amount = ease_out_back((t - 1.08) / 0.22) if spec.puzzle_type == "memory_challenge" else 1.0
-        half_w, half_h = 150 * max(.08, badge_amount), 50 * max(.08, badge_amount)
-        badge = _bounds((540-half_w, 1130-half_h, 540+half_w, 1130+half_h), size)
-        rounded_card(image, badge, _scaled(38, size), palette["primary"], palette["outline"], _scaled(4, size))
-        if badge_amount > .55:
-            draw.text(scale_point((540, 1130), size), spec.difficulty.upper(), font=font(_scaled(48, size)), fill=palette["text_light"], anchor="mm")
     return image
 
 
@@ -220,91 +180,25 @@ def _sequence_frame(image: Image.Image, round_spec: RoundSpec, local: float, pal
         draw_sparkles(draw, image.size, palette["success"], (local - 4.35) / 0.7)
 
 
-def _jigsaw_points(bounds: tuple[int, int, int, int], edges: list[int], tab: int) -> list[tuple[float, float]]:
-    return piece_points(bounds, edges, tab)
-
-
-def _jigsaw_piece(draw: ImageDraw.ImageDraw, bounds: tuple[int, int, int, int], edges: list[int], fill: str, outline: str, width: int) -> None:
-    points = _jigsaw_points(bounds, edges, max(8, (bounds[2] - bounds[0]) // 7))
-    draw.polygon(points, fill=fill)
-    draw.line(points + [points[0]], fill=outline, width=width, joint="curve")
-
-
-def _lerp_bounds(start: tuple[int, int, int, int], end: tuple[int, int, int, int], progress: float) -> tuple[int, int, int, int]:
-    return tuple(round(a + (b - a) * progress) for a, b in zip(start, end))  # type: ignore[return-value]
-
-
-def _dashed_hole(draw: ImageDraw.ImageDraw, bounds: tuple[int, int, int, int], edges: list[int], fill: str, outline: str, width: int) -> None:
-    points = _jigsaw_points(bounds, edges, max(8, (bounds[2] - bounds[0]) // 7))
-    draw.polygon(points, fill=fill)
-    phase, dash = 0.0, max(8, width * 3)
-    stroke = []
-    for start, end in zip(points, points[1:] + points[:1]):
-        distance = math.dist(start, end)
-        steps = max(1, math.ceil(distance / max(1, width / 2)))
-        for step in range(steps):
-            a, b = step / steps, (step + 1) / steps
-            if int((phase + distance * a) / dash) % 2 == 0:
-                first = (start[0] + (end[0] - start[0]) * a, start[1] + (end[1] - start[1]) * a)
-                last = (start[0] + (end[0] - start[0]) * b, start[1] + (end[1] - start[1]) * b)
-                stroke.extend((first, last))
-            elif stroke:
-                draw.line(stroke, fill=outline, width=width, joint="curve")
-                stroke = []
-        phase += distance
-    if stroke:
-        draw.line(stroke, fill=outline, width=width, joint="curve")
-
-
-def _fit_frame(image: Image.Image, round_spec: RoundSpec, local: float, palette: dict[str, str], difficulty: str) -> None:
-    draw = ImageDraw.Draw(image)
-    data, size = round_spec.data, image.size
-    rounded_card(image, _bounds((105, 280, 975, 1120), size), _scaled(70, size), palette["surface"], palette["outline"], _scaled(7, size))
-    rows, columns = data["rows"], data["columns"]
-    cell = min(660 / columns, 660 / rows)
-    left, top = 540 - columns * cell / 2, 700 - rows * cell / 2
-    slots = [_bounds((left + column * cell, top + row * cell, left + (column + 1) * cell, top + (row + 1) * cell), size)
-             for row in range(rows) for column in range(columns)]
-    hole = slots[data["hole_slot"]]
-    color = palette[data["piece_colors"][data["hole_slot"]]]
-    for index, bounds in enumerate(slots):
-        if index != data["hole_slot"]:
-            _jigsaw_piece(draw, bounds, data["piece_edges"][index], palette[data["piece_colors"][index]], palette["outline"], _scaled(5, size))
-    state = visual_state(local, difficulty)
-    think_end = 0.35 + thinking_duration("puzzle_fit", difficulty)
-    move_start, solved_at = think_end + 0.20, think_end + 0.90
-    _dashed_hole(draw, hole, data["hole_edges"], palette["background"], palette["primary"], _scaled(7, size))
-    candidates = []
-    for index, logical in enumerate(data["candidate_cards"]):
-        x1, y1, x2, y2 = logical
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-        lift = 14 * ease_out_cubic((local - think_end) / 0.20) if state == "highlight" and index == data["correct_index"] else 0
-        bounds = _bounds((cx - 92, cy - 92 - lift, cx + 92, cy + 92 - lift), size)
-        candidates.append(bounds)
-        if state in ("moving", "solved") and index == data["correct_index"]:
-            continue
-        shadow = tuple(value + _scaled(7, size) for value in bounds)
-        _jigsaw_piece(draw, shadow, data["candidates"][index], palette["background_2"], palette["background_2"], _scaled(3, size))
-        outline = palette["success"] if state == "highlight" and index == data["correct_index"] else palette["outline"]
-        _jigsaw_piece(draw, bounds, data["candidates"][index], color, outline, _scaled(5, size))
-    if state == "moving":
-        source = candidates[data["correct_index"]]
-        source = (source[0], source[1] - _scaled(14, size), source[2], source[3] - _scaled(14, size))
-        _jigsaw_piece(draw, _lerp_bounds(source, hole, ease_in_out((local - move_start) / 0.70)), data["hole_edges"], color, palette["outline"], _scaled(5, size))
-    elif state == "solved":
-        _jigsaw_piece(draw, hole, data["hole_edges"], color, palette["outline"], _scaled(5, size))
-        draw_sparkles(draw, size, palette["success"], (local - solved_at) / 0.55)
-    if 0.35 <= local < think_end:
-        progress_y = 1710 if difficulty == "hard" else 1550
-        draw_progress_bar(image, _bounds((245, progress_y, 835, progress_y + 22), size),
-                          1 - (local - 0.35) / thinking_duration("puzzle_fit", difficulty),
-                          palette["background_2"], palette["primary"])
-
-
 def render_frame(spec: VideoSpec, t: float, size: tuple[int, int], background: Image.Image | None = None) -> Image.Image:
     t = max(0.0, min(spec.total_duration - 1 / FPS, t))
+    use_theme(spec)  # the per-video dark background tone
     if spec.puzzle_type == "hidden_motion_hunt":
         return draw_hidden_motion(spec.rounds[0], t, size)
+    if spec.puzzle_type == "puzzle_fit":
+        return draw_puzzle_fit_frame(spec, t, size)
+    if uses_exit_hard_look(spec):
+        return draw_exit_hard_frame(spec, t, size)
+    if spec.puzzle_type == "cube_count":
+        return draw_cube_frame(spec, t, size)
+    if spec.puzzle_type == "memory_challenge":
+        return draw_memory_frame(spec, t, size)
+    if spec.puzzle_type == "lucky_pick":
+        return draw_lucky_frame(spec, t, size)
+    if spec.puzzle_type == "quick_math" and spec.rounds and "format" in spec.rounds[0].data:
+        return draw_quick_math_frame(spec, t, size)
+    if spec.puzzle_type == "bounce_arena":
+        return draw_bounce_frame(spec, t, size)
     if t < spec.intro_duration:
         base = background or create_background(size, _palette(spec), 0 if spec.puzzle_type == "lucky_pick" else spec.seed % 3)
         return _intro_frame(spec, t, size, base)
@@ -315,6 +209,8 @@ def render_frame(spec: VideoSpec, t: float, size: tuple[int, int], background: I
         progress = ease_out_back((t - rounds_end) / spec.outro_duration)
         draw_brand_mark(image, scale_point((540, 860), size), _scaled(270 * max(0.2, progress), size), palette)
         draw_sparkles(ImageDraw.Draw(image), size, palette["accent"], progress)
+        draw_cta(image, scale_point((540, 1160), size), _scaled(54, size),
+                 palette["text_dark"], palette["surface"])
         return image
     elapsed = t - spec.intro_duration
     round_index = min(spec.round_count - 1, int(elapsed / spec.round_duration))
@@ -329,17 +225,11 @@ def render_frame(spec: VideoSpec, t: float, size: tuple[int, int], background: I
         _equation_frame(image, round_spec, local, spec, palette)
     elif spec.puzzle_type == "missing_number":
         _sequence_frame(image, round_spec, local, palette)
-    elif spec.puzzle_type == "puzzle_fit":
-        _fit_frame(image, round_spec, local, palette, spec.difficulty)
-    elif spec.puzzle_type == "memory_challenge":
-        draw_memory_round(image, round_spec, local, palette)
     elif spec.puzzle_type == "flash_count":
         draw_flash_round(image, round_spec, local, palette)
-    elif spec.puzzle_type == "lucky_pick":
-        draw_lucky_game(image, round_spec, local, palette)
     else:
         draw_path_puzzle(image, round_spec, local, spec.difficulty, palette)
-    transition_start = spec.round_duration - (0.2 if spec.puzzle_type == "puzzle_fit" else 0.4)
+    transition_start = spec.round_duration - 0.4
     if local > transition_start and round_index < spec.round_count - 1:
         alpha = int(90 * ease_in_out((local - transition_start) / 0.4))
         overlay = Image.new("RGBA", size, palette["background"] + f"{alpha:02x}")
@@ -358,21 +248,31 @@ def render_quality_frame(spec: VideoSpec, t: float, quality: str) -> Image.Image
 
 
 def render_cover(spec: VideoSpec) -> Image.Image:
-    """Render a stable full-quality hero frame directly from the puzzle spec."""
+    """Render the video's cover: the game's 3D template for Puzzly for You games, otherwise a stable hero frame."""
+    from .covers import has_template, render_game_cover
+    if has_template(spec):
+        return render_game_cover(spec)
     settings = RENDER_QUALITIES["final"]
     if spec.puzzle_type == "hidden_motion_hunt":
         return render_frame(spec, 0.0, settings.internal_size).resize(settings.output_size, Image.Resampling.LANCZOS)
-    if spec.puzzle_type in ("quick_math", "puzzle_fit", "memory_challenge", "flash_count", "lucky_pick"):
+    if spec.puzzle_type == "bounce_arena":
+        image = render_frame(spec, BOUNCE_COVER_TIME, settings.internal_size)
+    elif spec.puzzle_type == "puzzle_fit":
+        image = render_frame(spec, PUZZLE_FIT_COVER_TIME, settings.internal_size)
+    elif uses_exit_hard_look(spec):
+        image = render_frame(spec, EXIT_HARD_COVER_TIME, settings.internal_size)
+    elif spec.puzzle_type == "cube_count":
+        image = render_frame(spec, CUBE_COVER_TIME, settings.internal_size)
+    elif spec.puzzle_type == "memory_challenge":
+        image = render_frame(spec, MEMORY_COVER_TIME, settings.internal_size)
+    elif spec.puzzle_type == "lucky_pick":
+        image = render_frame(spec, LUCKY_COVER_TIME, settings.internal_size)
+    elif spec.puzzle_type == "quick_math" and spec.rounds and "format" in spec.rounds[0].data:
+        image = render_frame(spec, QUICK_MATH_COVER_TIME, settings.internal_size)
+    elif spec.puzzle_type in ("quick_math", "flash_count"):
         image = render_frame(spec, min(1.25, spec.intro_duration - 1 / FPS), settings.internal_size)
     else:
         image = render_frame(spec, spec.intro_duration + 0.34, settings.internal_size)
-        palette = _palette(spec)
-        draw = ImageDraw.Draw(image)
-        badge_center_y = 1760 if spec.puzzle_type == "puzzle_fit" and spec.difficulty == "hard" else 1620
-        badge = _bounds((390, badge_center_y - 50, 690, badge_center_y + 50), image.size)
-        rounded_card(image, badge, _scaled(38, image.size), palette["primary"], palette["outline"], _scaled(4, image.size))
-        draw.text(scale_point((540, badge_center_y), image.size), spec.difficulty.upper(),
-                  font=font(_scaled(48, image.size)), fill=palette["text_light"], anchor="mm")
     return image.resize(settings.output_size, Image.Resampling.LANCZOS)
 
 
