@@ -193,6 +193,10 @@ if selected_type == "bounce_arena":
     st.caption("6 colors • 5.0 sn Pick One • deterministic arena physics")
 count = st.selectbox("Number of videos", [1, 3, 5, 10, 30])
 quality = st.selectbox("Quality", ["Draft", "Final"]).lower()
+music_on = st.selectbox("Müzik", ["Kapalı", "Açık"]) == "Açık"
+if music_on and (selected_type in ("missing_number", "flash_count", "hidden_motion_hunt")
+                 or (selected_type == "find_the_exit" and difficulty != "hard")):
+    st.caption("Müzik yalnızca Puzzly for You görünümündeki oyunlarda çalar; bu seçim müziksiz üretilir.")
 seed_text = st.text_input("Optional Seed", placeholder="Boş = otomatik")
 
 if selected_type == "mixed":
@@ -248,6 +252,9 @@ if single_clicked or batch_clicked:
         specs = generate_unique_specs(requested_count, selected_type, difficulty or "easy", theme, base_seed,
                                       operation=operation, challenges=challenges, background_bytes=background_bytes,
                                       placement_mode=placement_mode, manual_objects=manual_objects)
+        if music_on:  # stored in metadata, which stays out of the fingerprint
+            from dataclasses import replace as _replace
+            specs = [_replace(spec, metadata={**spec.metadata, "music": "on"}) for spec in specs]
         if quality == "draft":
             batch_dir, previews = render_draft_previews(specs, progress=update_progress)
             videos = [preview.video_path for preview in previews]

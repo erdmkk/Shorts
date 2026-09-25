@@ -130,6 +130,9 @@ def timeline_audio(spec: VideoSpec) -> np.ndarray:
         winner_at = 5.0 + float(data["simulation_duration"])
         place(winner_at, sounds["answer_ding"])
         place(winner_at + .18, sounds["sparkle"])
+        from .music import add_music, music_enabled
+        if music_enabled(spec):
+            audio = add_music(spec, audio)
         return finalize_mix(audio)
 
     place(0.08, sounds["intro_pop"])
@@ -250,6 +253,9 @@ def timeline_audio(spec: VideoSpec) -> np.ndarray:
         transition_at = spec.round_duration - 0.38
         place(start + transition_at, sounds["transition_whoosh"])
     place(spec.total_duration - spec.outro_duration + 0.12, sounds["sparkle"])
+    from .music import add_music, music_enabled
+    if music_enabled(spec):
+        audio = add_music(spec, audio)
     return finalize_mix(audio)
 
 

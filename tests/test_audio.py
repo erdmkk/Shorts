@@ -49,3 +49,28 @@ def test_diagnostic_wav_is_stereo_48khz(tmp_path) -> None:
         assert wav.getnchannels() == 2
         assert wav.getsampwidth() == 2
         assert wav.getnframes() == AUDIO_RATE * 5
+
+
+def test_music_is_opt_in_quick_math_only_and_ducks_under_effects() -> None:
+    from dataclasses import replace
+    import numpy as np
+    from puzzly.audio import MIX_PEAK_LIMIT, timeline_audio
+    from puzzly.generator import generate_spec
+    from puzzly.music import music_enabled, music_track
+    spec = generate_spec("quick_math", 7, "hard")
+    with_music = replace(spec, metadata={"music": "on"})
+    assert not music_enabled(spec) and music_enabled(with_music)
+    assert spec.fingerprint() == with_music.fingerprint()  # music never changes duplicate detection
+    silent, scored = timeline_audio(spec), timeline_audio(with_music)
+    assert silent.shape == scored.shape and not np.allclose(silent, scored)
+    assert float(np.abs(scored).max()) <= MIX_PEAK_LIMIT + 1e-9
+    assert np.array_equal(music_track(with_music, 48000), music_track(with_music, 48000))  # deterministic
+    from puzzly.music import STYLES
+    for kind in STYLES:  # every Puzzly for You game has its own character and a valid, peak-safe mix
+        item = replace(generate_spec(kind, 3, "hard"), metadata={"music": "on"})
+        assert music_enabled(item)
+        mixed = timeline_audio(item)
+        assert float(np.abs(mixed).max()) <= MIX_PEAK_LIMIT + 1e-9 and not np.allclose(mixed, timeline_audio(replace(item, metadata={})))
+    assert len({style["bpm"] for style in STYLES.values()}) >= 6
+    legacy = replace(generate_spec("flash_count", 3, "hard"), metadata={"music": "on"})
+    assert not music_enabled(legacy)  # light-theme games stay music-free

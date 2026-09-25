@@ -74,7 +74,7 @@ EXIT_HARD_TRACE = 1.6
 EXIT_HARD_HOLD = 0.9
 # Cube Count (Puzzly for You look): cubes drop in, flash, vanish, then are counted stack by stack.
 CUBE_BUILD = 0.6
-CUBE_VISIBLE = {"easy": 2.7, "medium": 2.2, "hard": 0.5}
+CUBE_VISIBLE = {"easy": 2.5, "medium": 2.0, "hard": 0.3}
 CUBE_HIDE = 0.3
 CUBE_THINKING = 3.0
 CUBE_RETURN = 0.4

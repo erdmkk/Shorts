@@ -47,3 +47,14 @@ def test_lucky_pick_ui_hides_difficulty_and_challenges() -> None:
     assert "Number of videos" in labels and "Quality" in labels
     assert "1 game" in app.info[0].value and "24.5" in app.info[0].value
     assert "7 renk • 5.0 sn seçim" in app.caption[-1].value and "neon labirent" in app.caption[-1].value
+
+
+def test_music_toggle_defaults_off() -> None:
+    app = AppTest.from_file("app.py").run()
+    music = next(box for box in app.selectbox if box.label == "Müzik")
+    assert music.value == "Kapalı" and music.options == ["Kapalı", "Açık"]
+    music.select("Açık").run()
+    app.selectbox[0].select("Flash Count").run()
+    assert not app.exception and any("yalnızca Puzzly for You" in caption.value for caption in app.caption)
+    app.selectbox[0].select("Cube Count").run()
+    assert not any("yalnızca Puzzly for You" in caption.value for caption in app.caption)

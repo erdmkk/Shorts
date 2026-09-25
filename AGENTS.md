@@ -283,7 +283,7 @@ Active standard puzzle type (Easy/Medium/Hard, default 4 rounds, manual 3/4/5, p
 - Each stack casts a contact shadow. During the count, a glowing footprint frames the base of each stack as it is counted.
 - Round timeline:
   - 0.6 s: the cubes drop in.
-  - Flash: Easy 2.7 s, Medium 2.2 s, Hard 0.5 s.
+  - Flash: Easy 2.5 s, Medium 2.0 s, Hard 0.3 s.
   - 0.3 s: the cubes dissolve.
   - 3.0 s: thinking, with a `?`, `How many cubes?`, and a numeric timer that ticks at 3, 2, and 1 seconds.
   - 0.4 s: the cubes return.
@@ -372,6 +372,32 @@ Standalone, no difficulty. The physics are in `puzzly/puzzles/bounce_arena.py` (
 - Total video length is at most 30 s. The fingerprint holds the full replay data.
 
 ## Audio V7
+
+### Background music (opt-in)
+
+- The UI has a `Müzik` box (`Kapalı` by default, or `Açık`). When it is on, the app writes `metadata["music"] = "on"` into each spec. Metadata is not part of the fingerprint, so music never affects duplicate detection.
+- Every Puzzly for You game plays music: the games with a 3D cover template (`music.supports_music`). Light-theme games render without it, and the UI says so.
+- `puzzly/music.py` synthesizes the music locally (no copyrighted assets) and deterministically per video. All games share one signature:
+  - a soft minor pad under the whole video, with a thump at the start;
+  - a bass and hat groove on one global beat grid from the first second to the end card, so it never restarts or stops between levels; it lifts slightly during thinking time;
+  - the last seconds of each timer (up to 3 s) add an arpeggio and sixteenth-note hats on the same grid;
+  - each answer adds a major chord on top;
+  - a final chord plays under the end card, with a 0.4 s fade.
+- Each game has its own character (`STYLES`), with keys chosen per video from the style's list:
+
+  | Game | Character | Tempo | Bass | Hats |
+  |---|---|---|---|---|
+  | Quick Math | focused | 96 BPM | root | off-beat |
+  | Puzzle Fit | dreamy, bell-like arpeggio | 88 BPM | root | off-beat |
+  | Find the Exit | mysterious, i–VI–iv–v progression | 80 BPM | low, long | beats 2 and 4 |
+  | Cube Count | techy, staccato | 104 BPM | octave | sixteenths |
+  | Memory Challenge | calm | 84 BPM | root | off-beat |
+  | Lucky Pick | playful | 112 BPM | root–fifth | off-beat |
+  | Bounce Arena | energetic | 120 BPM | eighth-note | off-beat |
+
+  Memory's thinking windows are the memorize time and each question. Lucky Pick's and Bounce Arena's are the pick window, and their answer is the winner.
+- The music peaks at about −19 dBFS and ducks 60 % under every sound effect, so ticks and dings stay clear. The final mix still goes through `finalize_mix`.
+- Keep music off for videos that will use a trending in-app sound on YouTube.
 
 Generate royalty-free effects locally: intro pop, object pop, soft timer pulse, answer ding, puzzle snap, sparkle, transition whoosh. Keep them clean, crisp, and game-like. No harsh buzzers or voices. Use float64 internally at 48 kHz, remove meaningful DC, apply an 8 ms smooth squared-sine fade at both SFX boundaries, keep individual peaks below −7 dBFS, and transparently scale overlapping mixes to at most −1 dBFS before integer PCM conversion. Never rely on hard clipping.
 
