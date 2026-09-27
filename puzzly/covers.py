@@ -28,10 +28,15 @@ CROPS = {
     "puzzle_fit": (60, 300, 1020, 1440),
     "find_the_exit": (90, 270, 990, 1520),
     "cube_count": (100, 560, 980, 1380),
+    "flash_count": (40, 670, 1040, 1050),
+    "line_follow": (40, 272, 1040, 1790),
     "memory_challenge": (110, 320, 970, 1190),
     "lucky_pick": (50, 310, 1030, 1620),
     "bounce_arena": (90, 450, 990, 1400),
 }
+
+
+COVER_TIER = 1  # Line Follow cover tangle: level 2's size (dense enough to look hard, quick to weave)
 
 
 def S(value: float) -> int:
@@ -152,9 +157,10 @@ def tile3d(symbol: str, size: float, fill: str, ink: str = "#141008", empty: boo
 
 
 def cube3d(color: str, size: float) -> Image.Image:
-    """A lit isometric cube: light top, base left, dark right."""
+    """A lit isometric cube: light top, base left, dark right (in the active object palette)."""
+    from .palette import object_color
     px = S(size)
-    base = rgb(color)
+    base = rgb(object_color(color))
     image = Image.new("RGBA", (px, round(px * 1.15)), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     w, h = px, px * 1.15
@@ -389,6 +395,226 @@ def operator_board(data: dict) -> Image.Image:
     return board
 
 
+def portal3d(index: int, size: float) -> Image.Image:
+    """A Find the Exit portal (star, moon, sun) as a thick glowing coin with an extruded rim."""
+    from .palette import object_color
+    from .visuals.find_the_exit import EXIT_COLORS, _symbol
+    px = S(size)
+    color = rgb(object_color(EXIT_COLORS[index]))
+    mask = Image.new("L", (px, px), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, px - 1, px - 1), fill=255)
+    side = extrude(mask, max(5, px // 8), hex_of(mix(color, (0, 0, 0), .35)), hex_of(mix(color, (0, 0, 0), .8)), .3, 1.0)
+    coin = Image.new("RGBA", side.size, (0, 0, 0, 0))
+    coin.alpha_composite(side)
+    top = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(top)
+    face_fill = rgb("#1B2350")
+    draw.ellipse((0, 0, px - 1, px - 1), fill=face_fill, outline=color, width=max(3, px // 12))
+    _symbol(draw, index, px / 2, px / 2, px * .3, color, face_fill)
+    shine_mask = Image.new("L", (px, px), 0)
+    ImageDraw.Draw(shine_mask).ellipse((px * .14, px * .08, px * .86, px * .46), fill=46)
+    shine = Image.new("RGBA", (px, px), (255, 255, 255, 0))
+    shine.putalpha(ImageChops.multiply(shine_mask.filter(ImageFilter.GaussianBlur(px * .06)), mask))
+    top.alpha_composite(shine)
+    coin.alpha_composite(top)
+    return coin
+
+
+def _orb3d(size: float, color: str) -> Image.Image:
+    """A glossy sphere: radial shading with a soft specular highlight."""
+    px = S(size)
+    y, x = np.mgrid[0:px, 0:px].astype(np.float32)
+    r = px / 2
+    d = np.hypot(x - r, y - r) / r
+    light = np.clip(1 - np.hypot(x - r * .7, y - r * .62) / (r * 1.25), 0, 1)
+    base = np.array(rgb(color), np.float32)
+    shade = base * (.45 + .55 * light[..., None]) + 255 * (light[..., None] ** 6) * .75
+    alpha = np.clip((1 - d) * r, 0, 1) * 255
+    return Image.fromarray(np.dstack([np.clip(shade, 0, 255), alpha]).astype(np.uint8))
+
+
+def maze_board(data: dict) -> Image.Image:
+    """The video's level-1 maze redrawn in 3D: raised walls, glowing portals, and the start orb (no route)."""
+    from .visuals.find_the_exit import FLOOR, FLOOR_ALT, TRAIL, WALL_BOTTOM, WALL_RIM, WALL_TOP, wall_segments
+    rows, columns = data["rows"], data["columns"]
+    cell = S(min(780 / columns, 900 / rows))
+    margin, top_pad, bottom_pad = S(60), cell * 2.0, cell * 1.6
+    bw, bh = round(columns * cell + margin * 2), round(rows * cell + top_pad + bottom_pad)
+    left, top = margin, top_pad
+    board = Image.new("RGBA", (bw, bh), rgb("#171E3B") + (255,))
+    draw = ImageDraw.Draw(board)
+    for row in range(rows):
+        for column in range(columns):
+            x, y = left + column * cell, top + row * cell
+            draw.rectangle((x, y, x + cell, y + cell), fill=rgb(FLOOR if (row + column) % 2 else FLOOR_ALT))
+    # Each portal lights the floor below it.
+    light = Image.new("L", board.size, 0)
+    light_draw = ImageDraw.Draw(light)
+    for node in data["exits"]:
+        cx = left + (node % columns + .5) * cell
+        light_draw.ellipse((cx - cell * 2.2, top - cell * 1.2, cx + cell * 2.2, top + cell * 2.6), fill=120)
+    glow = Image.new("RGBA", board.size, rgb("#8C7BFF") + (0,))
+    glow.putalpha(light.filter(ImageFilter.GaussianBlur(cell * .9)).point(lambda v: v * 70 // 255))
+    board.alpha_composite(glow)
+    # Walls: a soft floor shadow, an extruded side, a gradient top face, and a bright rim.
+    geometry = {"cell": cell, "left": left, "top": top}
+    width = max(S(6), round(cell * .27))
+    mask = Image.new("L", board.size, 0)
+    mask_draw = ImageDraw.Draw(mask)
+    for x1, y1, x2, y2 in wall_segments(data, geometry):
+        mask_draw.line((x1, y1, x2, y2), fill=255, width=width)
+        for px, py in ((x1, y1), (x2, y2)):
+            mask_draw.ellipse((px - width / 2, py - width / 2, px + width / 2, py + width / 2), fill=255)
+    depth = max(S(5), round(cell * .3))
+    shadow = Image.new("RGBA", board.size, (0, 0, 0, 0))
+    shadow.putalpha(ImageChops.offset(mask, depth, round(depth * 1.8)).filter(ImageFilter.GaussianBlur(depth)).point(lambda v: v * 190 // 255))
+    board.alpha_composite(shadow)
+    side = extrude(mask, depth, hex_of(mix(rgb(WALL_BOTTOM), (0, 0, 0), .3)), "#0B0F2A", .35, 1.0)
+    board.alpha_composite(side.crop((0, 0, bw, bh)))
+    body = Image.linear_gradient("L").resize(board.size)
+    face_layer = Image.composite(Image.new("RGBA", board.size, rgb(WALL_BOTTOM) + (255,)),
+                                 Image.new("RGBA", board.size, rgb(WALL_TOP) + (255,)), body)
+    face_layer.putalpha(mask)
+    board.alpha_composite(face_layer)
+    bevel = max(S(2), round(width * .25))
+    rim = Image.new("RGBA", board.size, rgb(WALL_RIM) + (0,))
+    rim.putalpha(ImageChops.subtract(mask, ImageChops.offset(mask, bevel, bevel)).point(lambda v: v * 170 // 255))
+    board.alpha_composite(rim)
+    # Portals above the three top openings, the start orb below the bottom opening.
+    portal = min(S(130), cell * 1.3)
+    for index, node in enumerate(data["exits"]):
+        cx, cy = left + (node % columns + .5) * cell, top - cell * 1.0
+        from .palette import object_color
+        halo = Image.new("RGBA", board.size, rgb(object_color(("#FFC24B", "#B69CFF", "#FF7A45")[index])) + (0,))
+        hm = Image.new("L", board.size, 0)
+        ImageDraw.Draw(hm).ellipse((cx - portal, cy - portal, cx + portal, cy + portal), fill=150)
+        halo.putalpha(hm.filter(ImageFilter.GaussianBlur(portal * .45)))
+        board.alpha_composite(halo)
+        coin = portal3d(index, portal / SS)
+        board.alpha_composite(coin, (round(cx - portal / 2), round(cy - portal / 2)))
+    sx, sy = left + (data["start"] % columns + .5) * cell, top + rows * cell + cell * .8
+    orb = cell * .95
+    halo = Image.new("RGBA", board.size, rgb(TRAIL) + (0,))
+    hm = Image.new("L", board.size, 0)
+    ImageDraw.Draw(hm).ellipse((sx - orb * 1.3, sy - orb * 1.3, sx + orb * 1.3, sy + orb * 1.3), fill=190)
+    halo.putalpha(hm.filter(ImageFilter.GaussianBlur(orb * .5)))
+    board.alpha_composite(halo)
+    sphere = _orb3d(orb / SS, TRAIL)
+    board.alpha_composite(sphere, (round(sx - sphere.width / 2), round(sy - sphere.height / 2)))
+    return board
+
+
+LUCKY_PANEL = (52, 322, 1028, 1612)  # the maze panel in logical frame coordinates
+
+
+def lucky_board(data: dict) -> Image.Image:
+    """The Lucky Pick maze redrawn in 3D: raised neon-rimmed walls, the seven targets as 3D tokens, and the devourer
+    lurking at the entrance with its jaw ajar. No selection rings: the cover is the moment before the pick."""
+    from .puzzles.lucky_pick import TARGET_SIZE
+    from .visuals.lucky_pick import CHARACTER_RADIUS, EYE, _maze_masks, creature
+    corridors = tuple((tuple(a), tuple(b)) for a, b in data["corridors"])
+    pockets = tuple(tuple(point) for point in data["valid_target_positions"])
+    box = tuple(S(value) for value in LUCKY_PANEL)
+    floor = _maze_masks((W, H), corridors, pockets, tuple(data["entrance"]), 0).crop(box)
+    bw, bh = floor.size
+    panel = Image.new("L", (bw, bh), 0)
+    ImageDraw.Draw(panel).rounded_rectangle((0, 0, bw - 1, bh - 1), radius=S(46), fill=255)
+    walls = ImageChops.subtract(panel, floor)
+    board = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    board.alpha_composite(Image.merge("RGBA", (*Image.new("RGB", (bw, bh), rgb("#0A0D24")).split(), panel)))
+    ox, oy = LUCKY_PANEL[0], LUCKY_PANEL[1]
+    # Each target lights the floor of its pocket in its own colour.
+    for target in data["targets"]:
+        x, y = S(target["position"][0] - ox), S(target["position"][1] - oy)
+        glow = Image.new("L", (bw, bh), 0)
+        ImageDraw.Draw(glow).ellipse((x - S(80), y - S(80), x + S(80), y + S(80)), fill=150)
+        light = Image.new("RGBA", (bw, bh), rgb(target["color_value"]) + (0,))
+        light.putalpha(ImageChops.multiply(glow.filter(ImageFilter.GaussianBlur(S(36))), floor))
+        board.alpha_composite(light)
+    # Walls: a shadow cast into the corridors, an extruded side, a lit top face, and a neon rim along every edge.
+    depth = S(20)
+    shadow = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    shadow.putalpha(ImageChops.multiply(ImageChops.offset(walls, depth, round(depth * 1.6)).filter(ImageFilter.GaussianBlur(depth)), floor)
+                    .point(lambda v: v * 200 // 255))
+    board.alpha_composite(shadow)
+    board.alpha_composite(extrude(walls, depth, "#1A2050", "#070A1C", .35, 1.0).crop((0, 0, bw, bh)))
+    top_face = Image.composite(Image.new("RGBA", (bw, bh), rgb("#1E2560") + (255,)), Image.new("RGBA", (bw, bh), rgb("#3C48A8") + (255,)),
+                               Image.linear_gradient("L").resize((bw, bh)))
+    top_face.putalpha(walls)
+    board.alpha_composite(top_face)
+    edge = ImageChops.subtract(walls, walls.filter(ImageFilter.MinFilter(15)))
+    neon = Image.composite(Image.new("RGBA", (bw, bh), rgb(ACCENT) + (255,)), Image.new("RGBA", (bw, bh), rgb(PUZZLE_FIT_PALETTE["primary"]) + (255,)),
+                           Image.linear_gradient("L").resize((bw, bh)))
+    bloom = neon.copy()
+    bloom.putalpha(edge.filter(ImageFilter.GaussianBlur(S(14))).point(lambda v: min(255, v * 3)))
+    board.alpha_composite(bloom)
+    neon.putalpha(edge)
+    board.alpha_composite(neon)
+    # The targets as 3D tokens.
+    for target in data["targets"]:
+        x, y = S(target["position"][0] - ox), S(target["position"][1] - oy)
+        token = token3d(target["shape_id"], target["color_value"], TARGET_SIZE * 1.1)
+        board.alpha_composite(token, (round(x - S(TARGET_SIZE * 1.1) / 2), round(y - S(TARGET_SIZE * 1.1) / 2)))
+    # The devourer rises from the entrance portal, glaring, jaw ajar.
+    ex, ey = S(data["entrance"][0] - ox), S(data["entrance"][1] - oy)
+    portal = Image.new("L", (bw, bh), 0)
+    ImageDraw.Draw(portal).ellipse((ex - S(170), ey - S(170), ex + S(170), ey + S(170)), fill=210)
+    red = Image.new("RGBA", (bw, bh), rgb(EYE) + (0,))
+    red.putalpha(portal.filter(ImageFilter.GaussianBlur(S(55))))
+    board.alpha_composite(red)
+    monster = creature(S(CHARACTER_RADIUS * 1.75), mouth=.5, brow=1.0, look=(0, -1))
+    board.alpha_composite(monster, (round(ex - monster.width / 2), round(ey - monster.height / 2 - S(60))))
+    board.putalpha(ImageChops.multiply(board.getchannel("A"), panel))
+    return board
+
+
+def cover_snake_pose(targets: list[dict]) -> list[tuple[float, float]]:
+    """A staged, spoiler-free snake for the cover: it rises out of its den in a slow S-curve, head pointing into open
+    space. It is not taken from the chase, so it never hints at which target is eaten first; the head keeps well
+    clear of every target."""
+    from .puzzles.lucky_snake import ENTRY
+    starts = [tuple(target["position"]) for target in targets]
+    best: list[tuple[float, float]] = []
+    for length in (340, 300, 260, 220, 180, 140):
+        for phase in (0.0, math.pi, math.pi / 2, -math.pi / 2):
+            points = [(ENTRY[0] + 55 * math.sin(k * 5 / 95 + phase) - 55 * math.sin(phase), ENTRY[1] - k * 5)
+                      for k in range(int(length / 5))]
+            points.reverse()  # head first
+            if min(math.dist(points[0], start) for start in starts) >= 170:
+                return points
+            if not best:
+                best = points
+    return best[-28:]  # everything is crowded: keep the snake short, just leaving its den
+
+
+def snake_board(spec: VideoSpec) -> Image.Image:
+    """Lucky Pick snake chase: the empty arena with the seven targets at their start positions as 3D tokens and the
+    snake rising from its den in a staged pose. Nothing on the cover hints at who is eaten or who survives."""
+    from .puzzles.lucky_snake import ARENA_CENTER, ARENA_RADIUS, TARGET_SIZE
+    from .visuals.lucky_snake import _arena, _portal, draw_snake
+    data = spec.rounds[0].data
+    from .palette import background_for, object_color
+    arena = _arena((W, H), background_for(spec)).copy()
+    _portal(arena, SS, .6, 0.0)
+    draw_snake(arena, cover_snake_pose(data["targets"]), SS, [], [], 0.0, 1.0)
+    pad = 40
+    box = (round(ARENA_CENTER[0] - ARENA_RADIUS - pad), round(ARENA_CENTER[1] - ARENA_RADIUS - pad),
+           round(ARENA_CENTER[0] + ARENA_RADIUS + pad), round(ARENA_CENTER[1] + ARENA_RADIUS + pad))
+    board = arena.crop(tuple(S(value) for value in box)).convert("RGBA")
+    size = TARGET_SIZE * 1.12
+    for target in data["targets"]:
+        x, y = target["position"]
+        glow = Image.new("RGBA", board.size, rgb(object_color(target["color_value"])) + (0,))
+        gm = Image.new("L", board.size, 0)
+        gx, gy = S(x - box[0]), S(y - box[1])
+        ImageDraw.Draw(gm).ellipse((gx - S(70), gy - S(70), gx + S(70), gy + S(70)), fill=110)
+        glow.putalpha(gm.filter(ImageFilter.GaussianBlur(S(30))))
+        board.alpha_composite(glow)
+        token = token3d(target["shape_id"], target["color_value"], size)
+        board.alpha_composite(token, (round(gx - S(size) / 2), round(gy - S(size) / 2)))
+    return board
+
+
 def frame_crop(spec: VideoSpec, moment: float, box: tuple[int, int, int, int]) -> Image.Image:
     """The real level-1 board, cut from the video's own frame at 2x."""
     from .renderer import render_frame
@@ -416,27 +642,43 @@ def _template(spec: VideoSpec) -> dict:
         return {"title": ("PUZZLE", "FIT"), "subtitle": "ONLY ONE FITS.", "cta": "CAN YOU FIND IT?", "line": levels,
                 "content": frame_crop(spec, .6, CROPS[kind]),
                 "floaters": [tile3d("?", 104, color, "#FFFFFF") for color in ("#7C5CFF", "#FF5F6D", "#2EE6C5", "#FFC371", "#7C5CFF", "#FF5F6D")]}
+    # Covers never state a time: thinking and viewing times differ by level and difficulty.
     if kind == "find_the_exit":
-        return {"title": ("FIND THE", "EXIT"), "subtitle": "ONLY ONE IS OPEN.", "cta": "WHICH ONE?", "line": levels,
-                "content": frame_crop(spec, .6, CROPS[kind]),
-                "floaters": [token3d(shape, color, 110) for shape, color in
-                             (("star", "#FFD23F"), ("moon", "#B388FF"), ("circle", "#FF8A3D"), ("star", "#FFD23F"), ("moon", "#B388FF"), ("circle", "#FF8A3D"))]}
+        return {"title": ("FIND THE", "EXIT"), "subtitle": "3 EXITS.  1 WAY OUT.", "cta": "CAN YOU ESCAPE?",
+                "line": f"{spec.round_count} MAZES  ·  EACH ONE LONGER", "content": maze_board(first),
+                "floaters": [portal3d(index % 3, 110) for index in (0, 1, 2, 0, 1, 2)]}
     if kind == "cube_count":
-        from .config import CUBE_COLORS, CUBE_VISIBLE
+        from .config import CUBE_COLORS
         colors = [CUBE_COLORS[item.data["color_id"]] for item in spec.rounds]
-        seconds = CUBE_VISIBLE.get(spec.difficulty or "hard", .5)
-        return {"title": ("CUBE", "COUNT"), "subtitle": "COUNT EVERY CUBE.", "cta": f"{seconds:g} SECONDS TO LOOK.", "line": levels,
+        return {"title": ("CUBE", "COUNT"), "subtitle": "COUNT EVERY CUBE.", "cta": "BLINK AND YOU MISS IT.", "line": levels,
                 "content": frame_crop(spec, spec.intro_duration + .75, CROPS[kind]),
                 "floaters": [cube3d(colors[index % len(colors)], 104) for index in range(6)]}
+    if kind == "flash_count":  # its own random number and digits, drawn separately from the game: no spoiler
+        import random as _random
+        from .visuals.flash_count import draw_cover_card
+        card = draw_cover_card(spec, (W, H)).crop(tuple(S(value) for value in CROPS[kind])).convert("RGBA")
+        digits = _random.Random(f"flash_cover_tiles:{spec.id}").choices("123456789", k=6)
+        return {"title": ("FLASH", "COUNT"), "subtitle": "READ IT IN A BLINK.", "cta": "WHAT WAS THE NUMBER?", "line": levels,
+                "content": card,
+                "floaters": [tile3d(digit, 104, color, "#FFFFFF") for digit, color in
+                              zip(digits, ("#7C5CFF", "#2EE6C5", "#FF5F6D", "#FFC371", "#3DA9FF", "#7C5CFF"))]}
+    if kind == "line_follow":  # a tangle of its own, woven from the video id: nothing from the game is on the cover
+        import random as _random
+        from .puzzles.line_weave import make_round as weave_round
+        from .visuals.line_follow import board_for
+        board = weave_round(0, COVER_TIER, _random.Random(f"line_cover:{spec.id}")).data
+        return {"title": ("LINE", "FOLLOW"), "subtitle": "FOLLOW THE LINE.", "cta": "WHERE DOES IT END?", "line": levels,
+                "content": board_for(board, (W, H)).crop(tuple(S(value) for value in CROPS[kind])).convert("RGBA"),
+                "floaters": [portal3d(index % 3, 110) for index in (0, 1, 2, 0, 1, 2)]}
     if kind == "memory_challenge":
         tokens = [token3d(token["shape"], token["color_value"], 110) for token in first["tokens"][:6]]
         return {"title": ("MEMORY", "CHALLENGE"), "subtitle": "REMEMBER ALL 9.",
-                "cta": f"{first['memorization_seconds']:g} SECONDS TO MEMORIZE.", "line": "8 QUESTIONS  ·  ONE BOARD",
+                "cta": "TRUST YOUR MEMORY?", "line": "8 QUESTIONS  ·  ONE BOARD",
                 "content": frame_crop(spec, spec.intro_duration + 1.0, CROPS[kind]), "floaters": tokens}
     if kind == "lucky_pick":
         targets = first["targets"]
         return {"title": ("LUCKY", "PICK"), "subtitle": "PICK ONE.", "cta": "ONLY ONE SURVIVES.", "line": "7 COLORS  ·  1 SURVIVOR",
-                "content": frame_crop(spec, .6, CROPS[kind]),
+                "content": snake_board(spec) if first.get("map_version") == "snake_chase_v1" else lucky_board(first),
                 "floaters": [token3d(target["shape_id"], target["color_value"], 104) for target in targets[:6]]}
     if kind == "bounce_arena":
         return {"title": ("BOUNCE", "ARENA"), "subtitle": "PICK A BALL.", "cta": "LAST ONE IN WINS.", "line": "REAL PHYSICS  ·  1 SURVIVOR",
@@ -449,17 +691,24 @@ def has_template(spec: VideoSpec) -> bool:
         return bool(spec.rounds) and spec.rounds[0].data.get("layout") == "deceptive_v2"
     if spec.puzzle_type == "quick_math":
         return bool(spec.rounds) and "format" in spec.rounds[0].data
+    if spec.puzzle_type == "line_follow":
+        return bool(spec.rounds) and spec.rounds[0].data.get("version") == "weave_v7"
     if spec.puzzle_type == "lucky_pick":
         return bool(spec.rounds) and spec.rounds[0].data.get("map_version") is not None
     if spec.puzzle_type == "bounce_arena":
         return bool(spec.rounds) and spec.rounds[0].data.get("version") == 8
+    if spec.puzzle_type == "flash_count":
+        return bool(spec.rounds) and spec.rounds[0].data.get("format") == "number_flash"
     return spec.puzzle_type in ("puzzle_fit", "cube_count", "memory_challenge")
 
 
 def render_game_cover(spec: VideoSpec) -> Image.Image:
-    """The video's 3D cover at 1080x1920, in the video's own background tone."""
+    """The video's 3D cover at 1080x1920, in the video's own background tone and object palette."""
+    from .palette import background_for
+    from .visuals.puzzle_fit import use_theme
+    use_theme(spec)  # background tone and object palette for everything drawn below
     template = _template(spec)
-    theme = template.get("theme") or dark_theme_for(spec.puzzle_type, spec.seed)
+    theme = template.get("theme") or background_for(spec)
     accent = template.get("accent", ACCENT)
     glow = DARK_THEMES.get(theme, DARK_THEMES["violet"])[2]
     image = background(theme, accent)

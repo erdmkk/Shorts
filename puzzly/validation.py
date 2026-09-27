@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .config import DEFAULT_ROUNDS, FPS, round_duration
-from .puzzles import bounce_arena, cube_count, find_the_exit, flash_count, hidden_motion_hunt, lucky_pick, line_follow, memory_challenge
+from .puzzles import bounce_arena, cube_count, find_the_exit, flash_count, hidden_motion_hunt, lucky_pick, line_follow, line_weave, memory_challenge
 from .models import RoundSpec, VideoSpec
 from .puzzles.puzzle_fit import candidate_card_bounds
 
@@ -134,12 +134,12 @@ def validation_errors(spec: VideoSpec) -> list[str]:
     elif not 3 <= len(spec.rounds) <= 5:
         errors.append("video must contain 3 to 5 rounds")
     if spec.puzzle_type == "flash_count" and spec.rounds:
-        identities = {(item.data.get("shape_id"), item.data.get("color_id")) for item in spec.rounds}
-        counts = [item.data.get("displayed_count") for item in spec.rounds]
-        if len(identities) != 1:
-            errors.append("flash video must use one shape and one color identity")
-        if any(first == second for first, second in zip(counts, counts[1:])):
-            errors.append("flash consecutive rounds must not repeat a count")
+        numbers = [item.data.get("number") for item in spec.rounds]
+        if len(set(numbers)) != len(numbers):
+            errors.append("flash video must not show the same number twice")
+        if [item.data.get("tier") for item in spec.rounds] != [flash_count.level_tier(index, len(spec.rounds))
+                                                                for index in range(len(spec.rounds))]:
+            errors.append("flash levels must grow from the opening to the final tier")
     if spec.puzzle_type == "cube_count" and spec.rounds:
         totals = [item.answer for item in spec.rounds]
         colors = [item.data.get("color_id") for item in spec.rounds]
@@ -154,6 +154,12 @@ def validation_errors(spec: VideoSpec) -> list[str]:
         from .config import quick_math_average_round
         if spec.round_duration != quick_math_average_round(spec.difficulty, [item.data.get("tier", 0) for item in spec.rounds]):
             errors.append("round duration does not match the quick math levels")
+    elif spec.puzzle_type == "line_follow" and spec.rounds and spec.rounds[0].data.get("version") == line_weave.VERSION:
+        if abs(spec.round_duration - line_weave.average_round(spec.rounds)) > 1e-3:
+            errors.append("round duration does not match the line follow levels")
+    elif spec.puzzle_type == "find_the_exit" and spec.rounds and spec.rounds[0].data.get("layout") == find_the_exit.HARD_LAYOUT:
+        if abs(spec.round_duration - find_the_exit.hard_average_round(spec.rounds)) > 1e-3:
+            errors.append("round duration does not match the maze levels")
     elif spec.puzzle_type in DEFAULT_ROUNDS and spec.round_duration != round_duration(spec.puzzle_type, spec.difficulty):
         errors.append("round duration does not match puzzle type")
     if spec.puzzle_type in ("lucky_pick", "bounce_arena") and spec.difficulty is not None:
@@ -166,10 +172,11 @@ def validation_errors(spec: VideoSpec) -> list[str]:
         if spec.difficulty is not None or spec.intro_duration != 0 or spec.outro_duration != BOUNCE_CTA_DURATION:
             errors.append("bounce_arena must have no difficulty/intro and must use its CTA outro")
     else:
-        intro_limit = 1.5
-        adult_look = spec.puzzle_type in ("puzzle_fit", "cube_count", "memory_challenge") or (
+        intro_limit = 2.0 if spec.puzzle_type == "flash_count" else 1.5  # its ARE YOU READY? screen
+        adult_look = spec.puzzle_type in ("puzzle_fit", "cube_count", "flash_count", "memory_challenge") or (
             spec.puzzle_type == "quick_math" and bool(spec.rounds) and "format" in spec.rounds[0].data) or (spec.puzzle_type == "find_the_exit" and spec.difficulty == "hard") or (
-            spec.puzzle_type == "lucky_pick" and bool(spec.rounds) and spec.rounds[0].data.get("map_version") is not None)
+            spec.puzzle_type == "lucky_pick" and bool(spec.rounds) and spec.rounds[0].data.get("map_version") is not None) or (
+            spec.puzzle_type == "line_follow" and bool(spec.rounds) and spec.rounds[0].data.get("version") == line_weave.VERSION)
         outro_limits = (1.2, 2.0) if adult_look else (0.7, 1.0)
         if not 0 < spec.intro_duration <= intro_limit or not outro_limits[0] <= spec.outro_duration <= outro_limits[1]:
             errors.append("intro/outro timing is invalid")

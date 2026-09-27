@@ -40,11 +40,13 @@ def test_batch_manifest_records_all_active_types(tmp_path, monkeypatch) -> None:
         rows = list(csv.DictReader(handle))
     for spec, row in zip(specs, rows):
         assert row["puzzle_type"] == spec.puzzle_type
-        assert row["difficulty"] == ("" if spec.puzzle_type in ("lucky_pick", "hidden_motion_hunt", "bounce_arena") else "medium")
+        no_difficulty = ("lucky_pick", "hidden_motion_hunt", "bounce_arena")
+        level = "hard" if spec.puzzle_type in ("flash_count", "line_follow") else "medium"  # produced only in Hard
+        assert row["difficulty"] == ("" if spec.puzzle_type in no_difficulty else level)
         assert row["filename"] == row["cover_filename"].replace(".jpg", ".mp4")
         expected_suffix = (f"_{spec.puzzle_type}.mp4"
-                           if spec.puzzle_type in ("lucky_pick", "hidden_motion_hunt", "bounce_arena")
-                           else f"_{spec.puzzle_type}_medium.mp4")
+                           if spec.puzzle_type in no_difficulty
+                           else f"_{spec.puzzle_type}_{level}.mp4")
         assert row["filename"].endswith(expected_suffix)
         assert int(row["round_count"]) == spec.round_count
         assert float(row["duration_seconds"]) == spec.total_duration
@@ -65,7 +67,7 @@ def test_batch_manifest_records_all_active_types(tmp_path, monkeypatch) -> None:
             assert len(__import__("json").loads(row["lucky_color_ids"])) == 7
             assert len(__import__("json").loads(row["lucky_positions"])) == 7
             assert row["winner_color"] and len(__import__("json").loads(row["elimination_order"])) == 6
-            assert row["corridor_template_id"].startswith("neon_maze_v1:") and row["mirrored"] == ""
+            assert row["corridor_template_id"].startswith("snake_chase_v1:") and row["mirrored"] == ""
             assert row["shape_id"] and len(__import__("json").loads(row["target_terminal_mapping"])) == 7
         elif spec.puzzle_type == "hidden_motion_hunt":
             assert row["background_hash"] and row["placement_mode"] == "auto" and row["object_count"] == "7"

@@ -15,3 +15,4 @@ assets/audio/generated/*
 data/*.tmp
 data/draft_previews/
 *TEMP_MPY_*
+*.out

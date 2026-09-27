@@ -7,7 +7,7 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-from ..config import EXIT_HARD_TRACE, thinking_duration
+from ..config import EXIT_HARD_ENTRANCE, EXIT_HARD_TRACE, exit_hard_round
 from ..models import RoundSpec, VideoSpec
 from .easing import ease_in_out, ease_out_cubic
 from .effects import rounded_surface
@@ -17,7 +17,7 @@ from .puzzle_fit import (PALETTE, _background, _clamp, _level_header, _rgb, _sna
 from .text import fitted_font, font
 
 HOOK_TEXT = "ONLY ONE EXIT IS OPEN."
-EXIT_COLORS = ("#FFC24B", "#B69CFF", "#FF7A45")  # star, moon, sun: equal brightness so none stands out
+EXIT_COLORS = ("#FFC24B", "#B69CFF", "#FF7A45", "#4BE08A")  # star, moon, sun, diamond: equal brightness so none stands out
 WALL_TOP = "#6F7FE8"
 WALL_BOTTOM = "#3A47A8"
 WALL_RIM = "#C9D2FF"
@@ -161,6 +161,8 @@ def _symbol(draw: ImageDraw.ImageDraw, index: int, x: float, y: float, radius: f
     elif index == 1:
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color)
         draw.ellipse((x - radius * .2, y - radius * 1.1, x + radius * 1.15, y + radius * .4), fill=cutout)
+    elif index == 3:  # diamond (levels with four exits)
+        draw.polygon([(x, y - radius), (x + radius * .78, y), (x, y + radius), (x - radius * .78, y)], fill=color)
     else:
         draw.ellipse((x - radius * .6, y - radius * .6, x + radius * .6, y + radius * .6), fill=color)
         for i in range(8):
@@ -171,7 +173,8 @@ def _symbol(draw: ImageDraw.ImageDraw, index: int, x: float, y: float, radius: f
 
 
 def _exit_portal(image: Image.Image, index: int, center: tuple[float, float], radius: float, glow: float, dim: float) -> None:
-    color = EXIT_COLORS[index]
+    from ..palette import object_color
+    color = object_color(EXIT_COLORS[index])
     _glow_disc(image, center, radius * 1.7, color, .55 * glow * (1 - dim))
     draw = ImageDraw.Draw(image)
     x, y = center
@@ -253,12 +256,24 @@ def route_polyline(round_spec: RoundSpec) -> list[tuple[float, float]]:
             + [exit_point(geometry, columns, data["exits"][round_spec.answer])])
 
 
+def schedule(spec: VideoSpec) -> list[tuple[float, float]]:
+    """(start, duration) of every level; bigger mazes get more thinking time, so later levels last longer."""
+    from ..puzzles.find_the_exit import round_thinking
+    result, start = [], spec.intro_duration
+    for item in spec.rounds:
+        duration = exit_hard_round(round_thinking(item.data))
+        result.append((start, duration))
+        start += duration
+    return result
+
+
 def draw_exit_hard_round(spec: VideoSpec, round_index: int, local: float, size: tuple[int, int]) -> Image.Image:
+    from ..puzzles.find_the_exit import round_thinking
     scale = size[0] / 1080
     image = _round_image(spec, round_index, size)
     round_spec = spec.rounds[round_index]
-    thinking = thinking_duration("find_the_exit", "hard")
-    think_end = .35 + thinking
+    thinking = round_thinking(round_spec.data)
+    think_end = EXIT_HARD_ENTRANCE + thinking
     arrival_at = think_end + EXIT_HARD_TRACE
     arrival = local - arrival_at if local >= arrival_at else None
     if local >= think_end:
@@ -284,7 +299,7 @@ def draw_exit_hard_round(spec: VideoSpec, round_index: int, local: float, size: 
         alpha = round(200 * (1 - ease_out_cubic(local / .3)))
         overlay = Image.new("RGBA", size, _rgb(PALETTE["background"]) + (alpha,))
         image.paste(overlay, (0, 0), overlay)
-    transition_start = spec.round_duration - .2
+    transition_start = exit_hard_round(thinking) - .2
     if local > transition_start and round_index < spec.round_count - 1:
         alpha = round(200 * ease_in_out((local - transition_start) / .2))
         overlay = Image.new("RGBA", size, _rgb(PALETTE["background"]) + (alpha,))
@@ -309,12 +324,12 @@ def draw_exit_hard_intro(spec: VideoSpec, t: float, size: tuple[int, int]) -> Im
 def draw_exit_hard_frame(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image.Image:
     if t < spec.intro_duration:
         return draw_exit_hard_intro(spec, t, size)
-    rounds_end = spec.intro_duration + spec.round_count * spec.round_duration
+    levels = schedule(spec)
+    rounds_end = levels[-1][0] + levels[-1][1]
     if t >= rounds_end:
         return draw_puzzle_fit_outro(spec, t - rounds_end, size)
-    elapsed = t - spec.intro_duration
-    round_index = min(spec.round_count - 1, int(elapsed / spec.round_duration))
-    return draw_exit_hard_round(spec, round_index, elapsed - round_index * spec.round_duration, size)
+    round_index = max(index for index, (start, _) in enumerate(levels) if t >= start)
+    return draw_exit_hard_round(spec, round_index, t - levels[round_index][0], size)
 
 
 def uses_exit_hard_look(spec: VideoSpec) -> bool:

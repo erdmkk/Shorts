@@ -4,7 +4,7 @@
 
 Build a completely local, deterministic, one-click generator for polished, language-free "Puzzly for You" YouTube Shorts for an adult audience. Videos should make adult viewers instantly think "challenge accepted": sleek, high-contrast, brain-teaser styling, a strong first-second hook, real tension, and a satisfying payoff. This is not a children's channel. It must run on Windows with CPU rendering and must not require paid APIs, cloud rendering, copyrighted assets, narration, subtitles, or manual video editing.
 
-The current feature pass adds a persistent Manual Placement editor to standalone Hidden Motion Hunt while preserving all approved games, publishing, and rendering architecture. Line Follow remains disabled.
+The current feature pass adds a persistent Manual Placement editor to standalone Hidden Motion Hunt while preserving all approved games, publishing, and rendering architecture. Line Follow is back, rebuilt as Weave V7 and produced only in Hard (see its section). Flash Count is now the number flash game (see its section).
 
 ## Product workflow
 
@@ -31,11 +31,13 @@ Everything required for normal generation must remain local and near-zero-cost.
 
 The active puzzle list is a current implementation inventory, not a permanent whitelist or a fixed product boundary. A direct user request may add a new puzzle type. When the newest direct user instruction explicitly requests a new game, it takes precedence over older puzzle-count or product-inventory statements in this file; no separate permission is required to update the inventory, UI, Mixed pool, tests, metadata, or related registrations needed for that game.
 
-Current active inventory: Quick Math, Missing Number, Puzzle Fit, Find the Exit, Memory Challenge, Flash Count, Lucky Pick, Hidden Motion Hunt, Cube Count, and Bounce Arena.
+Current active inventory: Quick Math, Missing Number, Puzzle Fit, Find the Exit, Memory Challenge, Flash Count, Lucky Pick, Hidden Motion Hunt, Cube Count, Bounce Arena, and Line Follow. (Removed at the user's request, do not re-add or re-suggest: a Cube Net game, "which cube does this net fold into?".)
+
+Audience data so far: the brain games (Find the Exit, Quick Math, Puzzle Fit) get the most views and engagement, far more than chance games. New games should make viewers think hard, not rely on luck.
 
 Protect existing puzzle games from unrelated changes. Adding or changing one requested game does not authorize redesigning or altering the gameplay of other games unless the user explicitly asks for those changes.
 
-Line Follow is disabled/experimental unless a direct user instruction explicitly re-enables it. Until then, keep its source, tests, rendering compatibility, old manifests, and SQLite records, but do not expose it in the Streamlit selector, mixed pool, or normal batch generation.
+Line Follow was removed once after several redesigns ("it never turned out the way I wanted"), then the user asked for it to be fixed and brought back: it is active again (selector and Mixed pool) as Weave V7, produced only in Hard. Only the user decides whether it stays.
 
 Odd One Out and Counting are deprecated. Their old files may remain if harmless, but they must not be reachable from the UI, mixed generation, metadata, documentation, defaults, or new samples.
 
@@ -49,13 +51,13 @@ Mixed batch generation selects its explicitly registered safe pool rather than e
 - This precedence applies to product scope. Continue to preserve project-wide architecture and safety rules unless the user explicitly requests a compatible architectural change.
 - In particular, preserve SQLite generation history, duplicate prevention, filename conventions, disposable output-folder behavior, Draft/Final rendering profiles, the safe audio pipeline, direct cover generation, deterministic validation, and local/offline-first operation.
 - Continue protecting unrelated existing games from incidental gameplay or visual changes.
-- Line Follow remains disabled/experimental unless explicitly re-enabled.
+- Line Follow is active (Weave V7, Hard only).
 
 ## Multi-round architecture and pacing
 
 `VideoSpec` contains validated `rounds`, `intro_duration`, `outro_duration`, `round_duration`, and computed `total_duration`.
 
-Auto defaults: Quick Math uses 4 levels (see its section). Missing Number and Puzzle Fit use 5 rounds. Missing Number uses 4.0 seconds thinking; Puzzle Fit uses 4.0 seconds for Easy/Medium and 6.0 seconds for Hard (see its section for its own intro/outro timing). Find the Exit uses 4 rounds with Easy 5.0, Medium 6.0, Hard 7.0 seconds thinking. Flash Count uses 4 rounds by default and supports manual 3/4/5. Memory Challenge and Lucky Pick each use one fixed game. Hidden Motion Hunt uses one continuous 18-second scene. Centralize timing and compute duration dynamically. Same seed/settings reproduce the content. Prevent duplicates.
+Auto defaults: Quick Math uses 4 levels (see its section). Missing Number and Puzzle Fit use 5 rounds. Missing Number uses 4.0 seconds thinking; Puzzle Fit uses 5.0 seconds for every difficulty (see its section for its own intro/outro timing). Find the Exit uses 4 rounds with Easy 5.0 and Medium 6.0 seconds thinking; Hard thinks 5, 6, 7, 8 (and 9) seconds on levels 1–4 (5). Flash Count uses 4 levels by default and supports manual 3/4/5. Memory Challenge and Lucky Pick each use one fixed game. Hidden Motion Hunt uses one continuous 18-second scene. Centralize timing and compute duration dynamically. Same seed/settings reproduce the content. Prevent duplicates.
 
 ## Shared visual timeline
 
@@ -69,7 +71,15 @@ Auto defaults: Quick Math uses 4 levels (see its section). Missing Number and Pu
 
 ## Per-video background tone (all dark-theme games)
 
-Each Puzzly for You video picks one dark background tone from `DARK_THEMES` in `puzzly/config.py`: violet, ocean, teal, crimson, emerald, ember, or plum. The choice is `dark_theme_for(puzzle_type, seed)`: random per video, never per round, and identical for all of a video's frames and its cover.
+Each Puzzly for You video uses one dark background tone from `DARK_THEMES` in `puzzly/config.py`: violet, ocean, teal, crimson, emerald, ember, or plum. The creator chooses it in the UI (`Arka plan rengi`); `Rastgele` (the default) keeps `dark_theme_for(puzzle_type, seed)`, random per video with equal odds. Either way it is never per round and identical for all of a video's frames and its cover (`palette.background_for`).
+
+## Creator colour choices (all dark-theme games)
+
+`puzzly/palette.py`. The UI offers two boxes next to each other: `Arka plan rengi` (Rastgele or one of the seven tones) and `Nesne paleti` (Klasik, Neon, Pastel, Mücevher tonları). The choices are stored in `VideoSpec.metadata` (`background`, `palette`), outside the fingerprint like music, and saved with the spec so a Final re-render matches; the defaults (`random`, `classic`) are not stored.
+- A palette keeps each object colour's hue and changes only its saturation and brightness (`recolor`), so colour names stay true (for example `BLUE SURVIVES`) and colours stay as distinct as before. Warm/cool palettes are deliberately not offered because they would change hues.
+- It applies to the objects of every Puzzly for You game: shape tokens (`token_image`), balls (`ball_sprite`), cubes (`face_colors`, `cube3d`), Puzzle Fit artwork, Find the Exit portals, and Lucky Pick glows, rings, bands, and bursts, in frames and covers. `use_theme(spec)` activates it; cached layers painted with object colours include the palette in their cache key.
+- Memory Challenge keeps its own colours (its colour-similarity levels are part of the game). Light-theme games ignore both choices, and the UI says so.
+- Cube Count receives the chosen tone at generation so its cube colours avoid clashing with it.
 - `render_frame` calls `use_theme(spec)`. The shared `_background` draws the active tone (gradient plus glow), and every cached background layer takes the theme as part of its cache key.
 - Cards, accents, and timers keep the shared palette.
 - Missing Operators keeps its own fixed teal and amber palette.
@@ -84,9 +94,12 @@ Each Puzzly for You video picks one dark background tone from `DARK_THEMES` in `
   - a tilted card that leans back, with a slab edge, a floor shadow, and a rim glow (short cards are centred);
   - 3D floating objects: four blurred ones in the margins and two sharp ones hugging the card corners;
   - a CTA pill and a short line.
+- Covers never state a time (no seconds in the title, subtitle, CTA, or line), because thinking and viewing times change by level and difficulty. Cube Count's CTA is `BLINK AND YOU MISS IT.` and Memory Challenge's is `TRUST YOUR MEMORY?`.
 - The card holds the video's own level-1 puzzle, so a small spoiler is accepted:
   - Quick Math redraws its level-1 shape board or missing-sign board in 3D (the answer stays `?`).
-  - The other games cut their level-1 board from the video's own frame (`CROPS`); Cube Count and Memory show the real first board.
+  - Lucky Pick (snake chase) shows the targets at their start positions as 3D tokens and a staged snake rising from its den (`snake_board`), never a moment of the chase, so it cannot hint at the first victim. Earlier maze videos redraw their maze in 3D (`lucky_board`).
+  - Find the Exit Hard redraws its level-1 maze in 3D (`maze_board`): extruded lit walls, star/moon/sun portal coins, and a glossy start orb, never the route. Its copy is `3 EXITS.  1 WAY OUT.`, `CAN YOU ESCAPE?`, and `N MAZES · EACH ONE LONGER`; its floaters are the three portal coins.
+  - The remaining games cut their level-1 board from the video's own frame (`CROPS`); Cube Count and Memory show the real first board.
 - Colours: the background (gradient, glows, a perspective floor grid, bokeh) uses the video's own tone, `dark_theme_for(puzzle_type, seed)`, so cover and video always match. Missing Signs keeps teal and amber. Floating objects come from the video (its shapes, cube colours, targets, balls, or sign tiles).
 - A cover is drawn at 2x and downsampled to 1080×1920 in about 4–9 s. It is saved as the video's JPG with the unchanged filenames.
 
@@ -167,7 +180,7 @@ Puzzle Fit is the pilot for the adult "challenge accepted" look. Its dedicated r
 - Each round cuts one deterministic abstract artwork (`rings`, `stripes`, `lowpoly`, `waves`, `burst`, with a palette from `PUZZLE_FIT_ART_PALETTES`) into bevelled, dark-outlined jigsaw pieces. Every candidate shows the hole's own artwork, so only the shape identifies the answer. Every round in a video uses a different style.
 - Hook intro (1.0 s): the first level's real board and candidates are visible from frame one under `ONLY ONE FITS.` and `N LEVELS · EACH ONE HARDER`. Never show the answer. The direct JPG cover is this hook state at `COVER_TIME`.
 - Levels escalate within every video and are shown as `LEVEL n /N`. Easy/Medium go 2×2 → 2×3 → 3×3. Hard goes 2×3 → mixed → 3×3, and the final level always uses the enclosed centre hole with no flat edge. Early Easy levels use two-edge decoys; later levels use one-edge decoys.
-- Easy/Medium: 4.0-second thinking and three candidates. Hard: 6.0-second thinking, no corner holes, and nine candidates in a centred 3×3 grid: the answer plus all eight single-edge variants, so every decoy differs from the answer by exactly one edge.
+- Every difficulty uses 5.0-second thinking (`PUZZLE_FIT_THINKING`). Easy/Medium: three candidates. Hard: no corner holes, and nine candidates in a centred 3×3 grid: the answer plus all eight single-edge variants, so every decoy differs from the answer by exactly one edge.
 - Timer: a rounded bar below the level header plus a visible remaining-seconds number. It turns from accent to warning (≤50 %) to danger (≤25 %) and pulses in the final 1.5 seconds, with audio ticks at 3, 2, and 1 seconds. This numeric timer is an intentional Puzzle Fit exception to the shared no-countdown rule.
 - All candidates float with the same amplitude, differing only in phase, so motion never hints at the answer. Show no correct-answer cue during thinking.
 - Round timeline: 0.35 s entrance, thinking, 0.55 s elimination (wrong pieces shrink and drop out in a deterministic staggered order while the answer gains a success glow), a 0.45 s lift-and-fly into the hole, then a snap with a glow, a ring, and a particle burst, followed by a solved hold. Round = thinking + 2.2 s.
@@ -189,33 +202,48 @@ Puzzle Fit is the pilot for the adult "challenge accepted" look. Its dedicated r
 
 Easy and Medium keep the rules above. Hard uses its own generator (`layout: deceptive_v2`) and its own renderer, `puzzly/visuals/find_the_exit.py`, and shares Puzzle Fit's dark palette, hook intro, level header, numeric timer, and score-question outro.
 
-- Levels escalate inside every video: 8×10 (one sweep, three vertical runs) → 8×10 → 9×11 → 10×12 (two sweeps, five vertical runs) cells (columns × rows) for the default four rounds. The maze fills the logical box x 100–980, y 400–1400.
+- Levels escalate inside every video. Level n always uses grid tier n: 8×10 (one sweep, three vertical runs) → 10×12 → 12×14 → 13×16 → 14×17 (two sweeps, five vertical runs) cells (columns × rows). Auto is 4 levels; 3 stop at 12×14 and 5 reach 14×17 (the 13×16 proportions, one step larger). Every level is a larger grid, so corridors get narrower and the answer route longer (about 32 → 50 → 70 → 82 → 92+ cells). The maze fills the logical box x 100–980, y 400–1400. The large tiers keep 5, 4, and 3 candidate mazes instead of 10 so generation stays fast, and keep trying past 8,000 attempts until at least one is found. The retired 9×11 tier stays valid (`LEGACY_HARD_LEVELS`) so saved records can be re-rendered.
+- Thinking time grows with the level: 5, 6, 7, 8, 9 seconds for levels 1–5 (`EXIT_HARD_LEVEL_THINKING`), stored per round as `thinking_seconds` and validated against the grid tier. Levels therefore last different times: `visuals.find_the_exit.schedule` gives every level's start and duration (used by frames, effects, and music) and `VideoSpec.round_duration` is the average of the levels, so the total duration stays exact. Older rounds without `thinking_seconds` keep 8.0 seconds on every level.
 - Construction:
   1. **Snake route.** The answer route snakes through vertical lanes:
      - Edge exits: it works lane by lane from the far side, up, down, up (and down, up at the larger levels).
      - Middle exit: it climbs and dives on one side, crosses underneath, climbs and dives on the other side, then climbs the middle lane.
      - Upper turns stay at 20–42 % of the height, so the top band is left for the false exits. The route always enters its exit from directly below.
-  2. **Decoys.** False exits are placed after the route, only in columns where a decoy spine can dive to at least 30 % depth and dead-end one wall away from the route.
-  3. **Fill.** A single multi-root Wilson forest seeded by the route and the two decoy spines fills the rest. Region borders therefore follow random walks and look like ordinary maze walls.
-  4. **Selection.** Ten valid mazes are generated per round and the one with the largest smallest decoy region is kept.
+  2. **Decoys.** Levels 1–3 have three exits, levels 4–5 four (`exits` per level; a green diamond is the fourth portal). False exits are placed after the route, only in columns where a decoy spine (a winding walk that stops at the first cell at 30 % depth or more) can dive.
+  3. **Grow the false regions** (`maze_version: 3`, added after the user showed that a false exit could be ruled out by tracing back from it: its region was only ~20 cells and dead-ended at once). `_grow_decoys` grows every false region with loop-erased walks until together they own `DECOY_QUOTA` (62 %) of the off-route cells. Tracing back from a false exit is then about as long as solving from the start.
+  4. **Fill.** A single multi-root Wilson forest seeded by all trees fills the rest. Region borders therefore follow random walks and look like ordinary maze walls.
+  5. **Selection.** Several valid mazes are generated per round and the one with the largest smallest decoy region is kept. A 5-level video now takes about 60 s to generate (the straight-wall rule rejects most attempts).
 - Validation requires:
-  - exactly three trees and exactly one exit reachable from the start;
+  - one tree per exit (3 or 4) and exactly one exit reachable from the start;
   - the route matches the BFS path and meets its level's length, turn, and vertical-run thresholds (at least 3 or 5 alternating up/down runs);
   - every exit has an inward passage straight down;
-  - each false region covers at least 6 % of the cells;
-  - no interior straight wall is longer than 5 cells, because long unbroken seams give away sealed regions;
+  - each false region covers at least 6 % of the cells and, in version 3 mazes, at least `MIN_DECOY_SHARE` (60 %) of its fair share of the quota, and reaches at least `DECOY_REACH` (40 %) of the way down toward the start (older records skip these two checks);
+  - no interior straight wall is longer than 5 cells (6 on the four-exit levels, which have one more region border), because long unbroken seams give away sealed regions;
   - each recorded decoy end is the deepest false-region cell that touches the route at or below 30 % depth;
   - the route has enough competing branch points.
-- Answers come from shuffled [0, 1, 2] blocks, so every exit is correct at least once per video, and the answer is fixed before retries, so acceptance rates cannot bias it. Exit columns vary per round within left, centre, and right bands.
-- Timing: 8.0-second thinking, 1.6-second glowing route trace, 0.9-second hold (round = 10.85 s), a 1.0-second hook intro (`ONLY ONE EXIT IS OPEN.`), and a 1.6-second outro. Audio ticks at 3, 2, and 1 seconds, then a whoosh, a ding on arrival, and a sparkle.
+- Answers come from shuffled blocks per exit count ([0, 1, 2] for three exits, [0, 1, 2, 3] for four), so every exit is correct as often as the others, and the answer is fixed before retries, so acceptance rates cannot bias it. Exit columns vary per round within left, centre, and right bands.
+- Timing: per-level thinking (above), 1.6-second glowing route trace, 0.9-second hold (level = 0.35 + thinking + 2.5 s), a 1.0-second hook intro (`ONLY ONE EXIT IS OPEN.`), and a 1.6-second outro. Audio ticks at 3, 2, and 1 seconds, then a whoosh, a ding on arrival, and a sparkle.
 - Look:
   - Walls are rendered as lit 3D bars: a blurred drop shadow, a vertical gradient body, a bright top-left rim, and a dark lower edge.
-  - The floor is a faint checker, softly lit from the three exits.
-  - Exits are star/moon/sun portals of equal brightness, so none stands out; the start is a pulsing teal orb.
+  - The floor is a faint checker, softly lit from the exits.
+  - Exits are star/moon/sun (and diamond on four-exit levels) portals of equal brightness, so none stands out; the start is a pulsing teal orb.
   - The reveal draws a neon trail with bloom. On arrival, the wrong portals dim and the correct portal gets the ring-and-particle burst.
   - The cover is the game's 3D cover template (see Per-video 3D covers).
 
-## Line Follow V8.1
+## Line Follow — Weave V7, a board full of long same-colour cables, Hard only (current)
+
+The user found every earlier version too simple and its lines broken-looking (braid; Tangle V3 short Catmull-Rom lines; Tangle V4 wobbly 8 px random walks with gap-cut bridges). Weave V5 (tidy lines from every target to a row of sockets) was judged too empty: "fill the screen, the lines must be much longer and wander everywhere", and only the correct line may start at the bottom so the viewer never wonders where to begin. Weave V6 did that and was liked, but its level 5 was "a bit short for level 5": the figure's line must get longer level by level, at level 5 at least 1.5 times V6's (V6 drew about 3.6k–5.4k px there), the other lines must grow with it, and both must fill the board with no meaningless empty space. Do not bring any of the earlier versions back. Rules from the user: produced only in Hard, levels 1 to 5 get harder, even level 1 is not easy, the board is as full as possible, only the figure's line reaches the bottom, the lines get longer every level.
+
+Generator `puzzly/puzzles/line_weave.py` (data `version: weave_v7`, called by `line_follow.generate`), frames `puzzly/visuals/line_follow.py`. The UI shows a locked `Hard`; any requested difficulty gives the same Hard video, and filenames end in `_hard`. Auto is 5 levels (3 and 4 are supported: 3 use tiers 0, 2, 4).
+- Board: target portals across the top (star, moon, sun, diamond, ring, heart, triangle), one line each: 5 at levels 1–3 and 4 at levels 4–5 (the board only holds about 15–17k px of line under the readability rules, so the longest levels have fewer, longer lines). Only the figure's line (always the first line in the data, stored from the figure up to its target) reaches the bottom row, where the figure stands at a random x; every other line ends at a plain rounded loose end, at least 150 px from the figure and never below y 1400. The answer is never the target nearest above the figure.
+- Lines are uniform cubic B-splines stored as control points (tripled ends, a vertical lead out of the figure and into the targets), sampled every 5 px. They are grown one at a time, control point by control point (`Grower`), always heading for the emptiest room they can find (`_pick_goal`: of 36 random spots 230–950 px away, at least 90 px inside the sides and bottom and 130 px under the top band, the one farthest from any line), so they reach the corners too. The figure's line is grown first, from the figure: it keeps the strip under its target free while it wanders, keeps one self-crossing in reserve, and once its length budget is used (or, if it runs out of room, once it has 90 % of it: `EARLY_HOME`) it climbs to a gate under its target and straight up the target's chimney. Then each other line grows down from its target and ends as soon as its tip is clear after its length (or after 70 % of it, `MIN_DECOY_SHARE`, if it runs out of room). Each new control point finalises a piece of curve that `Tracer` checks at once; a line backs up when stuck (each dead end in a row backs up twice as far), restarts, and a round takes the previous line off (`Board.pop`) when one cannot be placed. Lines only move down through the band under the targets (y < 540), and every target keeps a clear chimney under it.
+- Readability rules (the same `Tracer` replays them in `validate`): two lines closer than 18 px must be crossing there (lines are 7.5 px wide, so a gap is always over 10 px); every crossing at least 36°; crossings at least 32 px apart; the same two lines never cross twice within 2.5 crossing windows; turning radius at least 30 px (in practice about 115 px); no line within 40 px of another line's end or of a target's chimney; self-crossings per line at most 5, 6, 8, 9, 12 for the figure's line and 2, 3, 3, 4, 5 for the others.
+- Tiers: the figure's line budget 3400, 4300, 5200, 6000, 7000 px (drawn about 3.5k–4.7k at level 1 and 6.8k–7.6k at level 5; `validate` requires at least 90 % of the budget); the other lines 2.6k–3.2k up to 3.7k–4.5k (drawn about 2.2k–3.5k at level 1 and 2.7k–4.5k at level 5; `validate` requires at least 70 % of the tier's lower bound); the figure's line crosses other lines at least 14, 18, 22, 24, 27 times (typically 25–49) and every other line crosses it; board coverage (40 px cells below y 540 and away from the figure, with a line within 44 px) at least 70, 73, 76, 76, 78 % (typically 76–85 %). Thinking 7, 9, 11, 13, 15 s (`LINE_THINKING`); a level lasts 0.35 + thinking + 2.4 s trace + 0.9 s hold, so 5 levels run about 76 s. Weaving a 5-level video takes about 25–150 s (`generate` is cached per seed).
+- Look: shared dark background, card, header, numeric timer, and end card. Cables are all the same colour: a 7.5 px light core with a 12.5 px dark casing and a soft bloom, drawn at twice the frame size and scaled down. At every crossing a coin flip per crossing decides which line is on top, and that line's piece is redrawn with its casing, so over and under read clearly without cutting gaps and no line is always underneath. The figure is a glowing teal head-and-shoulders pictogram. Reveal: a neon trail traces the figure's line up to its target, the other targets dim, and the correct one gets the ring-and-particle burst.
+- Hook intro (1.0 s): level one's real board (no answer) under `WHERE DOES IT LEAD?` and `N LEVELS · EACH ONE HARDER`. Cover: the 3D template (`LINE` / `FOLLOW`, `FOLLOW THE LINE.`, `WHERE DOES IT END?`) with a board of its own woven from the video id (`COVER_TIER`), never one of the video's boards.
+- Music: tense, 100 BPM, A or E minor, harp arpeggios. Older `tangle_v4` samples still validate (`line_tangle`) but can no longer be rendered; `weave_v5` and `weave_v6` records can no longer be validated or rendered.
+
+## Line Follow V8.1 (earlier light-theme version, kept for old records)
 
 - Auto 4 rounds; Easy/Medium/Hard thinking times 5/6/7 seconds.
 - Easy uses 3 paths and 2 controlled crossings; Medium uses 4 paths and 6 crossings; Hard uses 5 paths and 12 crossings. Every path has one top anchor, one unique destination, and meaningful interaction with the route group.
@@ -229,7 +257,7 @@ Easy and Medium keep the rules above. Hard uses its own generator (`layout: dece
 
 ## Memory Challenge V7 — 3×3 grid, Puzzly for You look
 
-Single-board game; Easy/Medium/Hard. The generator is `puzzly/puzzles/memory_challenge.py` and the frames are `draw_memory_frame` in `puzzly/visuals/memory.py`. It shares the dark palette, the numeric timer, and the score-question outro. The shape helpers (`token_image`, `shape_mask`) are still shared with Flash Count, Lucky Pick, and Hidden Motion Hunt, so new shapes may only be added, never altered.
+Single-board game; Easy/Medium/Hard. The generator is `puzzly/puzzles/memory_challenge.py` and the frames are `draw_memory_frame` in `puzzly/visuals/memory.py`. It shares the dark palette, the numeric timer, and the score-question outro. The shape helpers (`token_image`, `shape_mask`) are still shared with Lucky Pick and Hidden Motion Hunt, so new shapes may only be added, never altered.
 
 - A 3×3 grid of nine unique shapes. The pool is `MEMORY_SHAPES`, the eight classic shapes plus cross and moon. Pentagon and hexagon never share a board. Each shape has one colour from the difficulty's nine-colour palette.
 - Colour similarity is a separate UI choice (`Renk benzerliği`, 1–4), shown only for Memory Challenge and passed to the generator as the `colors_N` theme; the level is stored as `color_level` in the board data. The higher the level, the closer the colours (`GRID_PALETTE_IDS`, checked with OKLab):
@@ -249,22 +277,20 @@ Single-board game; Easy/Medium/Hard. The generator is `puzzly/puzzles/memory_cha
 - Store the nine shapes, colour ids and values, positions 1–9, the eight-question order, the final automatic position, the memorize seconds, the colour level, and the palette variant in the spec and manifest. They drive fingerprints and history.
 - Earlier five-token (V6) manifests cannot be re-rendered with the grid renderer.
 
-## Flash Count V9
+## Flash Count V10 — number flash, Puzzly for You look
 
-- Intro and matching direct JPG cover use the short global cue `How many?` above the existing six-token concept composition; never add a redundant standalone question mark or show an answer.
-- Use one deterministic shape and one deterministic base color for the entire video. Supported shapes are circle, triangle, square, star, hexagon, heart, diamond, and pentagon. Counts and positions change between rounds.
-- Default to four rounds; manual 3/4/5 remains supported. Every difficulty uses the same unbiased 5–10 shape pool. Never repeat a count in consecutive rounds, but allow non-consecutive reuse so round history does not create elimination clues.
-- Place identical, unrotated, uniformly sized tokens with deterministic random-sequential/Poisson-disc-like scatter. Enforce safe bounds, bounding-box separation, minimum center distance, broad coverage, quadrant balance, and limits on row/column alignment. Never use a visible grid. Token size may respond to count/readability only, never difficulty.
-- Pop every shape in synchronously for 0.2 seconds, then keep the complete field fully visible for exactly 1.20 seconds on Easy, 0.90 seconds on Medium, or 0.65 seconds on Hard. The fully-visible timer starts after pop-in. Hide the entire field behind one opaque rounded panel, not per-token covers. Show only a large question mark and a subtle progress bar during exactly 3.0 seconds of thinking.
-- Reveal the same shapes in the same positions, then show the exact count centered underneath for a 1.0-second solved hold. Validate answer/count identity and every layout before rendering.
-- The 1.5-second standardized intro and direct 1080×1920 JPG cover use exactly six tokens in one curated scatter template, and `How many?`. Intro/cover shape and color must match the generated video's identity. Covers contain no answer, standalone question mark, or progress bar.
-- Persist shape ID, color ID, round counts, ordered positions, duration, filenames, and cover filename in fingerprints/history/manifests. Use the V7 safe audio pipeline.
-
+The user replaced the old shape-counting Flash Count completely: a number flashes for a split second, the viewer has 3 s to recall it, then the number is shown. Same name (`flash_count`), same slot in the selector and the Mixed pool. Generator `puzzly/puzzles/flash_count.py` (data `format: number_flash`, `version: number_flash_v1`), frames `puzzly/visuals/flash_count.py`. Old token-counting (V9) records can no longer be rendered.
+- Produced only in Hard (the user's rule): the generator always makes Hard videos whatever difficulty is passed, and the UI shows a locked `Hard`. The number stays on screen 0.2 s (6 frames at 30 fps), and 0.3 s (9 frames) on 6-digit levels (`FLASH_VISIBLE`, by digit count). Levels grow within every video by digits (`FLASH_DIGITS`): 4, 5, 6 digits on the opening, middle, and final tier (the Cube Count split: tiers 0, 0, 1, 2 for 4 levels; 0, 1, 2 for 3; 0, 0, 1, 2, 2 for 5).
+- Numbers are read, not recognised: no leading zero, no repeated neighbours (55), no counting runs of three (345, 987), no digit more than twice, and never the same number twice in a video.
+- Level timeline (every phase is a whole number of frames): 0.9 s GET READY (empty slots, one per digit, under pulsing focus brackets) → the number flashes (plain white digits in the slots, no animation) → straight to 3.0 s thinking (the user had the random-bar mask after the flash removed; do not bring it back) (`?` in every slot, numeric timer, `What was the number?`) → 1.0 s reveal (digits drop into their slots one by one, violet) → 0.9 s hold (all slots turn green, burst, `Did you get it?`). Every level lasts 6.1 s; a 0.2 s flash leaves a 0.1 s longer hold.
+- Intro (2.0 s, `FLASH_INTRO`): an `ARE YOU READY?` screen with empty slots, pulsing brackets, and `N LEVELS · ONE BLINK EACH`; no timer and no number, then the first level starts. Cover: the 3D template (`FLASH` / `COUNT`, `READ IT IN A BLINK.`, `WHAT WAS THE NUMBER?`) with its own random 4-digit number (`cover_number`, seeded by the video id, never one of its levels) and random floating digit tiles, so nothing from the game is spoiled; no time on the cover. Outro: the shared score-question end card.
+- Audio: a shutter click on the flash, a whoosh on the mask, clock ticks over the last 3 s, a pop per revealed digit, then ding and sparkle. Music: tense, 108 BPM, E or D minor, a vibraphone lead with its own motif.
 ## Cube Count V1 — Puzzly for You look
 
 Active standard puzzle type (Easy/Medium/Hard, default 4 rounds, manual 3/4/5, part of Mixed mode). Generator `puzzly/puzzles/cube_count.py`, renderer `puzzly/visuals/cube_count.py`; shares Puzzle Fit's dark palette, hook intro, level header, numeric timer, and score-question outro.
 
-- An isometric board: 4×4 on Easy and 5×5 on Medium/Hard. Stacks are 1–3 cubes tall; Hard's final level allows 4-cube towers and always includes at least one. Stacks obey gravity and occupy distinct cells. Every round picks its own cube colour from `CUBE_ROUND_COLORS` (sky, green, yellow, coral, violet, amber, pink, teal). Colours never repeat inside a video and never clash with that video's background tone (`THEME_CLASHING_CUBES`). Older single-colour videos keep `CUBE_COLOR_ID`. The faces are lit (light top, base left, dark right) with dark edges. Cube height is 1.15 × tile height; the spacing and footing rules below are what actually prevent a stack further back from reading as a taller one in front.
+- Big blocks (the user's addition, `version: 2` rounds): besides the one-cell towers, every level has exactly one big block (`size: 2`), a single box on a 2×2 footprint and one cube tall, with no inner edges, that counts as ONE cube (a hurried viewer counts four). It never carries cubes on top and keeps the same spacing from every tower (`spaced_stacks`). It needs room, so version 2 boards are one cell larger (`GRID_BIG`: 5×5 on Easy, 6×6 on Medium/Hard); the count reveal labels it `1`. Painter order uses `stack_order` (axis-separation first, then centre). Older rounds without `version` keep their 4×4 / 5×5 boards and still validate.
+- An isometric board: 4×4 on Easy and 5×5 on Medium/Hard (older rounds; see big blocks above for the current sizes). Stacks are 1–3 cubes tall; Hard's final level allows 4-cube towers and always includes at least one. Stacks obey gravity and occupy distinct cells. Every round picks its own cube colour from `CUBE_ROUND_COLORS` (sky, green, yellow, coral, violet, amber, pink, teal). Colours never repeat inside a video and never clash with that video's background tone (`THEME_CLASHING_CUBES`). Older single-colour videos keep `CUBE_COLOR_ID`. The faces are lit (light top, base left, dark right) with dark edges. Cube height is 1.15 × tile height; the spacing and footing rules below are what actually prevent a stack further back from reading as a taller one in front.
 - Levels escalate within every video (tiers 0, 0, 1, 2 for four rounds). Cube totals per tier:
   - Easy: 4–6, 5–8, 7–10.
   - Medium: 6–9, 8–11, 10–13.
@@ -292,24 +318,39 @@ Active standard puzzle type (Easy/Medium/Hard, default 4 rounds, manual 3/4/5, p
 - The hook intro shows a fixed concept cluster (never the real first board), `COUNT THE CUBES.`, and `N LEVELS · X SECONDS TO LOOK`. The cover is the game's 3D cover template (see Per-video 3D covers).
 - Manifests reuse `displayed_counts` for the per-round totals. Filenames: `PZ_XXXX_cube_count_<difficulty>`.
 
-## Lucky Pick V2 — neon maze, Puzzly for You look
+## Lucky Pick V3 — snake chase, Puzzly for You look
 
-One no-difficulty game per video. The generator is `puzzly/puzzles/lucky_pick.py` (`map_version: neon_maze_v1`) and the frames are `draw_lucky_frame` in `puzzly/visuals/lucky_pick.py`. It shares the dark palette, numeric timer, and the outro (with its own text).
+The current Lucky Pick ("Pick One"). One no-difficulty game per video: seven targets scatter in an open arena while a neon snake hunts them; the last one left wins. `lucky_pick.generate` builds it (`map_version: snake_chase_v1`); the simulation is `puzzly/puzzles/lucky_snake.py` and the frames are `puzzly/visuals/lucky_snake.py` (`draw_lucky_frame` dispatches to it). It shares the dark palette, numeric timer, header, progress row, and outro with the maze version below.
+
+- Simulation: deterministic and seeded, run once at generation time at 120 Hz and recorded at 30 fps (`frames`: time, head x/y, heading, snake length, and every live target's position; `catches`: target, time, and position). Validation re-runs it from `map_seed` and `attempt` and must reproduce the same game.
+  - Arena: a solid circle, centre (540, 1000), radius 440. No corners, so targets cannot be trapped.
+  - Targets: seven random, well-spaced start positions (shuffled so no index is favoured). All seven use exactly the same rules, so no colour or position is advantaged: a smooth wander; within 280 px of the head they dodge like real prey, mostly side-stepping out of the snake's line of travel and partly moving away (pure running-away would push everyone to the rim); a steady pull back from the rim into open space; darting back into the open at an angle when cornered; fleeing the body; and keeping clear of each other so every colour stays readable. Max speed 250 px/s with inertia.
+  - Snake: emerges from a den at the bottom of the rim when the pick window closes; the den then fades away (`den_opacity`). It never simply sweeps the targets in order around the arena: it prowls at 80 % speed toward random waypoints in the inner arena (at least 320 px away, so it cuts across), with a slow side-to-side sway; it strikes at full speed at a target that comes within 250 px inside a 75° cone in front of it; it gives up on prey that gets more than 400 px away after 1.2 s; after 3.2 s without a catch it hunts the nearest target; and a chase longer than 2.2 s makes it turn on another. Its turn rate is limited (3.4 rad/s prowling, 4.6 striking), so it sweeps in arcs and overshoots. Speed 195 px/s, +14 per catch, plus a boost when a chase stalls; length 230 px, +55 per catch. The head eats any target it reaches.
+  - Acceptance: a chase of 9–20 s, the first catch after at least 1.6 s, catches at least 0.45 s apart, and a final duel (last two targets) of at least 1.2 s. Rejected attempts are re-rolled (usually 1–4).
+- Look: a dark circular floor with a faint grid and a neon rim (violet at the top, cyan at the bottom). The snake has no face: a tapered light tube (dark edge, bright ice-white core, highlight, cyan bloom) with a brighter head bead. A swallowed target shrinks and spins into the head over a colour burst, travels down the body as a bulge, and stays as a band of its colour near the tail, so the body keeps score. Fleeing targets shiver and glow brighter when the head is close and leave fading afterimages when they move fast.
+- Timeline: 1.0 s hook intro (the real targets in the empty arena under `PICK ONE.`), 0.25 s appearance, exactly 5.0 s selection (`PICK ONE.`, `ONLY ONE SURVIVES.`, numeric timer, ticks at 3, 2, 1; targets bob in place inside rings in their colour), the chase (`N LEFT`, red at three or fewer, over the progress row), then `SURVIVOR!` with zoom, glow, and two bursts during the 1.7 s hold, and the shared 1.6 s end card with the winner and `DID YOURS SURVIVE?`. Typical videos run 19–24 s.
+- Rings mark the choices only while the viewer picks; they fade out over 0.3 s when the chase starts (`pick_ring_alpha`).
+- Audio: a whoosh as the snake leaves its den, a bite (snap and pop, panned by position) on every catch, a warning pulse before the last two catches, then the ding and sparkle for the survivor.
+- Cover: the 3D cover template; the card is the empty arena with the targets at their start positions as 3D tokens and a staged snake rising from its den in an S-curve, head pointing into open space at least 170 px from every target (`snake_board`, `cover_snake_pose`). It is never taken from the chase, so it gives no hint of which target is eaten first or who survives.
+
+## Lucky Pick V2 — neon maze (earlier version)
+
+`lucky_pick.generate_maze` (`map_version: neon_maze_v1`) and the maze half of `puzzly/visuals/lucky_pick.py`. It is no longer generated but stays valid, so saved maze videos can still be validated and re-rendered.
 
 - Maze:
   - Every video builds its own maze from a stored `map_seed`: a Wilson spanning tree over a 5×6 node grid (x 150–930, y 430–1370), a portal entrance corridor at (540, 1515), and two shortcut loops between far-apart branches.
   - Dead ends are the target pockets. There are at least nine, spread over the top, bottom, left, and right, and the loops never touch a pocket. The character therefore never walks over a target it has not chosen.
   - Seven targets (one shared shape, seven neon colours) take seven far-apart pockets.
-- Rendering: corridors are recessed dark channels (118 logical px wide, with an inner shadow and a dot grid) carved into hatched wall blocks. Every wall edge has a neon rim, violet at the top fading to cyan at the bottom, with bloom. Pockets have rings in their target's colour, and the entrance is a spinning portal.
+- Rendering: corridors are recessed dark channels (118 logical px wide, with an inner shadow and a dot grid) carved into hatched wall blocks. Every wall edge has a neon rim, violet at the top fading to cyan at the bottom, with bloom. Pockets have rings in their target's colour only while the viewer picks (hook intro and the 5.0 s selection); the rings fade out over 0.3 s when the pick window closes and never return (`ring_opacity`). The entrance is a spinning portal.
 - Selection:
   - `PICK ONE.` and `ONLY ONE SURVIVES.`, with the numeric timer and ticks at 3, 2, and 1 seconds. The selection window is exactly 5.0 s after a 0.25 s appearance.
   - The creature stays hidden until it emerges from the portal.
-- Creature: a lit indigo blob (radius 64 logical px) with a cyan rim and halo, eyes that look where it moves, blinks, and a waddle and tilt while travelling.
+- Creature ("the devourer", radius 64 logical px), designed for adults so the game never reads as a children's game: an armoured gunmetal sphere (lit from the upper left, red fresnel edge, crisp highlight, helmet seam) with four angled dorsal spikes, a red rim and a low red aura that swells before it strikes. One recessed visor eye glows red with a vertical slit pupil that looks where it moves; the visor narrows into a V-shaped glare when it is about to eat, and flickers briefly instead of blinking. The closed jaw is a jagged seam; the open jaw is a glowing maw lined with bone-coloured teeth. Never add cartoon eyes, cheeks, a tongue, or smiles. It glides with barely any squash and a slight lean into turns, and leaves a red trail.
 - Movement: a constant 680 px/s cruise with a 0.16 s speed-up and slow-down, along the shortest route. A fading trail follows the creature. It stops 92 px short of each target.
 - Eating (0.82 s):
   - 0.16 s anticipation: it crouches, frowns, and starts opening its mouth.
   - 0.36 s bite: it lunges, the mouth opens wide (teeth, glowing throat, tongue), and the target shivers, spins, and shrinks into the mouth. The jaws close at 70 % of the bite, with a colour-shard burst.
-  - 0.30 s: it chews with happy eyes and blushing cheeks, then settles into the empty pocket.
+  - 0.30 s: it shudders with a satisfied squint while red light pulses from its jaw seam, then settles into the empty pocket.
 - The header counts `N LEFT` (red at three or fewer) above a row of the seven targets, where eaten ones are struck out. The winner is never eaten. It gets `SURVIVOR!`, zoom, glow, and two bursts during the 1.7 s hold.
 - The hook intro is 1.0 s: the real maze and targets under `PICK ONE.`. The cover is the game's 3D cover template (see Per-video 3D covers). The outro is the 1.6 s shared end card with the winning target in the ring and `DID YOURS SURVIVE?`. Typical videos run 21–28 s.
 - Fingerprints and manifests store the map version and seed, geometry, shape, colour-to-pocket mapping, winner, elimination order, and timeline. `corridor_template_id` in the manifest holds `neon_maze_v1:<map_seed>`.
@@ -377,23 +418,25 @@ Standalone, no difficulty. The physics are in `puzzly/puzzles/bounce_arena.py` (
 
 - The UI has a `Müzik` box (`Kapalı` by default, or `Açık`). When it is on, the app writes `metadata["music"] = "on"` into each spec. Metadata is not part of the fingerprint, so music never affects duplicate detection.
 - Every Puzzly for You game plays music: the games with a 3D cover template (`music.supports_music`). Light-theme games render without it, and the UI says so.
-- `puzzly/music.py` synthesizes the music locally (no copyrighted assets) and deterministically per video. All games share one signature:
-  - a soft minor pad under the whole video, with a thump at the start;
+- `puzzly/music.py` synthesizes the music locally (no copyrighted assets) and deterministically per video. The goal is a "challenge accepted" feel that never tires the ear. All games share one signature:
+  - a soft pad under the whole video, with a thump at the start;
   - a bass and hat groove on one global beat grid from the first second to the end card, so it never restarts or stops between levels; it lifts slightly during thinking time;
-  - the last seconds of each timer (up to 3 s) add an arpeggio and sixteenth-note hats on the same grid;
+  - a melody: every game has its own two-bar motif A and answer B, played A, B, A (the repeat ends one step higher) and then one bar of rest. Notes are chord tones, so the melody follows the progression. Every lead voice uses few, soft harmonics and click-free fades;
+  - the last seconds of each timer (up to 3 s) swap the melody for an arpeggio and sixteenth-note hats on the same grid;
   - each answer adds a major chord on top;
   - a final chord plays under the end card, with a 0.4 s fade.
+- Two moods: `fun` games (Lucky Pick, Bounce Arena) use major keys, bouncier motifs, and a soft clap on beats 2 and 4. `tense` games (all others) use minor keys and add a soft heartbeat (lub-dub) under the last seconds of every timer.
 - Each game has its own character (`STYLES`), with keys chosen per video from the style's list:
 
-  | Game | Character | Tempo | Bass | Hats |
-  |---|---|---|---|---|
-  | Quick Math | focused | 96 BPM | root | off-beat |
-  | Puzzle Fit | dreamy, bell-like arpeggio | 88 BPM | root | off-beat |
-  | Find the Exit | mysterious, i–VI–iv–v progression | 80 BPM | low, long | beats 2 and 4 |
-  | Cube Count | techy, staccato | 104 BPM | octave | sixteenths |
-  | Memory Challenge | calm | 84 BPM | root | off-beat |
-  | Lucky Pick | playful | 112 BPM | root–fifth | off-beat |
-  | Bounce Arena | energetic | 120 BPM | eighth-note | off-beat |
+  | Game | Mood | Character, lead voice | Progression | Tempo | Bass | Hats |
+  |---|---|---|---|---|---|---|
+  | Quick Math | tense | focused, ticking staccato pluck | i–VI–III–VII | 96 BPM | root | off-beat |
+  | Puzzle Fit | tense | dreamy, long FM bell tones | i–iv–VI–v | 88 BPM | root | off-beat |
+  | Find the Exit | tense | mysterious, dotted glass steps | i–VI–iv–V | 80 BPM | low, long | beats 2 and 4 |
+  | Cube Count | tense | techy, syncopated square blips | i–VII–VI–VII | 104 BPM | octave | sixteenths |
+  | Memory Challenge | tense | calm, music-box arpeggio | i–III–VII–iv | 84 BPM | root | off-beat |
+  | Lucky Pick | fun | playful, bouncing marimba hook | I–V–vi–IV | 112 BPM | root–fifth | off-beat |
+  | Bounce Arena | fun | energetic, octave-jumping synth riff | vi–IV–I–V | 120 BPM | eighth-note | off-beat |
 
   Memory's thinking windows are the memorize time and each question. Lucky Pick's and Bounce Arena's are the pick window, and their answer is the winner.
 - The music peaks at about −19 dBFS and ducks 60 % under every sound effect, so ticks and dings stay clear. The final mix still goes through `finalize_mix`.
@@ -424,14 +467,15 @@ Never render an invalid educational puzzle. Validate every video and round befor
 
 - Quick Math (Shape Equations): at least 300 Easy, 400 Medium, and 500 Hard specs covering one new shape per clue, correct clue results, the level ramp, order-of-operations traps on levels 3–4, distinct answers, manual round counts, determinism, and frame/cover rendering.
 - Missing Number: at least 300 Easy, 400 Medium, and 500 Hard specs covering family distributions, valid answers/rules, readable value bounds, no within-video duplicates, and determinism.
-- Puzzle Fit: at least 1,000 rounds covering coherent boards, Easy/Medium three-candidate stability, Hard nine-candidate single-edge near-miss layout and 6-second thinking, exactly one match, determinism, bounds, and no overlap.
+- Puzzle Fit: at least 1,000 rounds covering coherent boards, Easy/Medium three-candidate stability, Hard nine-candidate single-edge near-miss layout, 5-second thinking on every difficulty, exactly one match, determinism, bounds, and no overlap.
 - Multi-round: Auto defaults, explicit 3/4/5, computed durations, manifest round count, and unique video fingerprints.
 - Layout: frame containment, visual center offset (normally ≤20 px), non-overlap, no clipped text/candidates, and separation of round indicator from content.
 - Memory Challenge: generate at least 500 Easy, 500 Medium, and 700 Hard specs. Validate one 3×3 board, nine unique shapes/colours/positions, eight unique timed questions, the excluded final token, determinism, duration, fingerprints, dark-card lightness, and statistically ordered OKLab closeness. Validate shape bounds and the full reveal-state progression.
-- Flash Count: generate at least 300 Easy, 400 Medium, and 500 Hard specs. Validate the unbiased shared 5–10 count pool, difficulty-specific visible times, no consecutive duplicate counts, allowed non-consecutive reuse, one shape/color per video, exact answers, safe non-overlapping scatter, coverage/alignment quality, determinism, fingerprints, intro/cover identity, and Line Follow deactivation.
-- Find the Exit: validate immediate inward passages for all three exits, exact one-exit reachability, tree acyclicity, route correctness, deterministic generation, route length/turn/horizontal/downward movement thresholds, route branch competition, and increasing Easy/Medium/Hard complexity.
+- Flash Count: validate the number rules, digit growth per level, difficulty-specific visible times (whole frames), unique numbers per video, determinism, fingerprints, and that the intro/cover never show a real number.
+- Find the Exit: validate immediate inward passages for every exit, exact one-exit reachability, tree acyclicity, route correctness, deterministic generation, route length/turn/horizontal/downward movement thresholds, route branch competition, and increasing Easy/Medium/Hard complexity.
 - Hidden Motion Hunt: validate required decodable upload, layout save/load, deterministic background hash/spec/fingerprint, Auto 7-object 2/2/3 tiers, Manual 1–20 objects and exact saved properties, supported shapes/colors, size/jump ranges, vertical-only motion, safe bounds, non-overlap/spacing, periodic loop state, exact 18-second duration, standalone Mixed exclusion, blank difficulty, filename, history, and manifest fields.
-- Lucky Pick: generate at least 700 specs. Validate seeded maze determinism, connectivity, dead-end pockets, one shared shape, seven distinct colours in unique pockets, routes along corridors that never cross another target, the speed profile, the eating state sequence (anticipation, wide bite, chomp, chew), the exact 5.0-second selection, the hidden creature during selection, winner survival and a uniform winner distribution, fingerprints, frames, the cover, manifests, and UI hiding.
+- Lucky Pick (snake chase): generate at least 140 specs. Validate determinism, the re-simulated chase, the acceptance window, one never-eaten survivor, a balanced winner index, targets inside the arena, eaten targets never returning, growth per catch, pick rings only during selection, frames, the cover, and metadata.
+- Lucky Pick (earlier maze version): generate at least 700 specs. Validate seeded maze determinism, connectivity, dead-end pockets, one shared shape, seven distinct colours in unique pockets, routes along corridors that never cross another target, the speed profile, the eating state sequence (anticipation, wide bite, chomp, chew), the exact 5.0-second selection, the hidden creature during selection, winner survival and a uniform winner distribution, fingerprints, frames, the cover, manifests, and UI hiding.
 - Rounded surfaces: verify supersampling-aware radius/stroke scaling, bounds, unclipped corners, LANCZOS downsampling, and intermediate antialiased edge colors without brittle screenshot equality.
 - Preserve relevant infrastructure tests; remove obsolete active-product expectations for Odd One Out and Counting.
 

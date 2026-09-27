@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections import deque
 from hashlib import sha256
+from itertools import combinations
 import random
 
-from ..config import (DEFAULT_ROUNDS, INTRO_DURATION, OUTRO_DURATION, PUZZLE_FIT_INTRO_DURATION,
-                      PUZZLE_FIT_OUTRO_DURATION, round_duration)
+from ..config import (DEFAULT_ROUNDS, EXIT_HARD_LEVEL_THINKING, EXIT_HARD_THINKING, INTRO_DURATION, OUTRO_DURATION,
+                      PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION, exit_hard_average_round, exit_hard_round,
+                      round_duration)
 from ..models import RoundSpec, VideoSpec
 
 
@@ -155,17 +157,37 @@ def make_round(index: int, difficulty: str, rng: random.Random) -> RoundSpec:
 # ---------------------------------------------------------------- Hard: large deceptive mazes
 
 HARD_LAYOUT = "deceptive_v2"
-# Levels escalate inside every Hard video: larger grids, more up/down sweeps, longer routes.
-# `sweeps` is how many times the answer route dives back down; `vertical_runs` = 2 * sweeps + 1.
+# Levels escalate inside every Hard video: every level is a larger grid in the same maze box, so corridors get
+# narrower and the answer route gets longer. `sweeps` is how many times the answer route dives back down;
+# `vertical_runs` = 2 * sweeps + 1. `candidates` is how many valid mazes are generated per round (the most
+# deceptive one is kept); the large grids use fewer so generation stays fast.
+# `exits` is the number of exits (levels 4 and 5 have four; the extra region border there needs one more cell of
+# straight wall). False regions are grown on purpose (MAZE_VERSION 3), so
+# tracing back from a false exit is as long as solving from the start: together they get `decoy_quota` of the cells
+# off the answer route, each must keep at least MIN_DECOY_SHARE of its fair share, and each must reach
+# `decoy_depth` of the way down toward the start.
 HARD_LEVELS = (
     {"columns": 8, "rows": 10, "sweeps": 1, "min_route": 32, "max_route": 70, "turn_ratio": .40,
-     "route_branches": 6, "false_share": .06, "max_straight": 5},
-    {"columns": 9, "rows": 11, "sweeps": 2, "min_route": 42, "max_route": 84, "turn_ratio": .40,
-     "route_branches": 8, "false_share": .06, "max_straight": 5},
+     "route_branches": 6, "false_share": .06, "max_straight": 5, "candidates": 10, "exits": 3},
     {"columns": 10, "rows": 12, "sweeps": 2, "min_route": 50, "max_route": 100, "turn_ratio": .40,
-     "route_branches": 10, "false_share": .06, "max_straight": 5},
+     "route_branches": 10, "false_share": .06, "max_straight": 5, "candidates": 10, "exits": 3},
+    {"columns": 12, "rows": 14, "sweeps": 2, "min_route": 70, "max_route": 140, "turn_ratio": .42,
+     "route_branches": 13, "false_share": .06, "max_straight": 5, "candidates": 5, "exits": 3},
+    {"columns": 13, "rows": 16, "sweeps": 2, "min_route": 82, "max_route": 170, "turn_ratio": .42,
+     "route_branches": 16, "false_share": .06, "max_straight": 6, "candidates": 4, "exits": 4},
+    {"columns": 14, "rows": 17, "sweeps": 2, "min_route": 92, "max_route": 190, "turn_ratio": .42,
+     "route_branches": 18, "false_share": .06, "max_straight": 6, "candidates": 3, "exits": 4},
 )
-HARD_CANDIDATES = 10  # valid mazes generated per round; the most deceptive one is kept
+MAZE_VERSION = 3
+DECOY_QUOTA = .62  # share of the off-route cells the false regions are grown to, together
+MIN_DECOY_SHARE = .6  # every false region keeps at least this much of its fair share of that quota
+DECOY_REACH = .4  # every false region reaches at least this far down (fraction of rows)
+# Earlier videos also used 9x11; it stays valid so saved records can still be re-rendered.
+LEGACY_HARD_LEVELS = (
+    {"columns": 9, "rows": 11, "sweeps": 2, "min_route": 42, "max_route": 84, "turn_ratio": .40,
+     "route_branches": 8, "false_share": .06, "max_straight": 5, "candidates": 10},
+)
+HARD_CANDIDATES = 10  # default number of valid mazes generated per round
 DECOY_DEPTH = 0.3  # each false region must dive at least this deep (fraction of rows) ...
 
 
@@ -215,14 +237,24 @@ def grid_metrics(route: list[int], columns: int) -> dict[str, int]:
 
 
 def level_tier(index: int, count: int) -> int:
-    if count <= 1:
-        return 2
-    fraction = index / (count - 1)
-    return 0 if fraction < 0.34 else (1 if fraction < 0.75 else 2)
+    """Level n always uses grid tier n: 3 rounds stop at 12x14, 4 at 13x16, and 5 at 14x17."""
+    return min(index, len(HARD_LEVELS) - 1)
+
+
+def level_thinking(rows: int, columns: int) -> float:
+    """Thinking seconds for a grid tier: level 1..5 get 5..9 seconds."""
+    tier = next(index for index, level in enumerate(HARD_LEVELS) if (level["rows"], level["columns"]) == (rows, columns))
+    return EXIT_HARD_LEVEL_THINKING[tier]
+
+
+def round_thinking(data: dict) -> float:
+    """A round's thinking time; older videos stored none and used the same time on every level."""
+    return float(data.get("thinking_seconds", EXIT_HARD_THINKING))
 
 
 def _level_for(rows: int, columns: int) -> dict | None:
-    return next((level for level in HARD_LEVELS if (level["rows"], level["columns"]) == (rows, columns)), None)
+    return next((level for level in HARD_LEVELS + LEGACY_HARD_LEVELS
+                 if (level["rows"], level["columns"]) == (rows, columns)), None)
 
 
 def _route_ok(route: list[int], target: int, level: dict) -> bool:
@@ -388,12 +420,55 @@ def _degree_branches(edges: list[list[int]], route: list[int]) -> int:
     return sum(degree.get(node, 0) >= 3 for node in route[1:-1])
 
 
+def _grow_decoys(labels: dict[int, int], edges: list, quotas: dict[int, int], rows: int, columns: int,
+                 rng: random.Random, allowed) -> None:
+    """Grow every false region toward its quota with loop-erased walks from free cells it can reach, so the
+    region borders still look like ordinary maze walls."""
+    cells = rows * columns
+    stuck: set[int] = set()
+    while True:
+        sizes = {label: 0 for label in quotas}
+        for value in labels.values():
+            if value in sizes:
+                sizes[value] += 1
+        hungry = [label for label in quotas if sizes[label] < quotas[label] and label not in stuck]
+        if not hungry:
+            return
+        label = min(hungry, key=lambda item: sizes[item] / quotas[item])
+        others = {node for node, value in labels.items() if value != label}
+        seeds = [node for node, value in labels.items() if value == label]
+        reach: set[int] = set()
+        for seed in seeds:
+            for other in grid_neighbors(seed, rows, columns):
+                if other not in labels and other not in reach:
+                    reach |= _free_reach(other, set(labels), rows, columns)
+        if not reach:
+            stuck.add(label)
+            continue
+        origin = rng.choice(sorted(reach))
+        walk = _loop_erased_walk(origin, lambda node: labels.get(node) == label, others, rows, columns, rng,
+                                 cells * 60, allowed)
+        if walk is None:
+            stuck.add(label)
+            continue
+        for node in walk[:-1]:
+            labels[node] = label
+        edges.extend(sorted(pair) for pair in zip(walk, walk[1:]))
+
+
+def decoy_reach(region: set[int], rows: int, columns: int) -> float:
+    """How far down a false region reaches (0 = top row, 1 = bottom row)."""
+    return max(node // columns for node in region) / (rows - 1)
+
+
 def _hard_round(index: int, level: dict, rng: random.Random, answer: int) -> RoundSpec | None:
     rows, columns = level["rows"], level["columns"]
     cells = rows * columns
+    exit_count = level.get("exits", 3)
     start = (rows - 1) * columns + rng.choice((columns // 2 - 1, columns // 2))
     route_lanes = _lanes(columns, 2 * level["sweeps"] + 1)
-    target = rng.choice(sorted(route_lanes[(0, len(route_lanes) // 2, -1)[answer]]))
+    lane = 0 if answer == 0 else (-1 if answer == exit_count - 1 else len(route_lanes) // 2)
+    target = rng.choice(sorted(route_lanes[lane]))
     # 1. The answer route: a long serpentine that snakes lane by lane, diving up and down.
     route = _serpentine_route(start, target, set(), rows, columns, rng, level["sweeps"])
     if route is None or not _route_ok(route, target, level):
@@ -401,31 +476,30 @@ def _hard_round(index: int, level: dict, rng: random.Random, answer: int) -> Rou
     route_cells = set(route)
     labels = {node: answer for node in route}
     edges = [sorted(pair) for pair in zip(route, route[1:])]
-    # 2. False exits are placed only where a decoy can dive deep and dead-end right beside the route.
+    # 2. False exits are placed only where a decoy can dive deep toward the start.
     def decoy_goals(column: int) -> list[int]:
         if column in labels or column + columns in labels:
             return []
         reach = _free_reach(column + columns, set(labels) | {start, column}, rows, columns)
-        return sorted(node for node in reach if node // columns >= rows * DECOY_DEPTH
-                      and any(n in route_cells for n in grid_neighbors(node, rows, columns)))
+        return sorted(node for node in reach if node // columns >= rows * DECOY_DEPTH)
 
     viable = [column for column in range(columns) if decoy_goals(column)]
     combos = []
-    for first in viable:
-        for second in viable:
-            trio = sorted((first, second, target))
-            if first < second and trio.index(target) == answer and trio[1] - trio[0] >= 2 and trio[2] - trio[1] >= 2:
-                combos.append((first, second))
+    for chosen in combinations(viable, exit_count - 1):
+        group = sorted((*chosen, target))
+        if group.index(target) == answer and all(b - a >= 2 for a, b in zip(group, group[1:])):
+            combos.append(chosen)
     if not combos:
         return None
     exits = sorted((*rng.choice(combos), target))
-    for label in rng.sample([index for index in range(3) if index != answer], 2):
+    decoy_labels = [index for index in range(exit_count) if index != answer]
+    for label in rng.sample(decoy_labels, len(decoy_labels)):
         column = exits[label]
         goals = decoy_goals(column)  # recomputed: the first decoy may have claimed cells
         if not goals:
             return None
-        goal = rng.choice(goals)
-        spine = _loop_erased_walk(column + columns, lambda node: node == goal, set(labels) | {start, column},
+        goal_set = set(goals)  # a winding walk that stops at the first deep cell it meets: short, but not straight
+        spine = _loop_erased_walk(column + columns, lambda node: node in goal_set, set(labels) | {start, column},
                                   rows, columns, rng, cells * 80)
         if not spine:
             return None
@@ -438,7 +512,11 @@ def _hard_round(index: int, level: dict, rng: random.Random, answer: int) -> Rou
     def allowed(first: int, second: int) -> bool:  # top exits only ever open straight down
         return not ((second in exits and first != second + columns) or (first in exits and second != first + columns))
 
-    # 3. Multi-root Wilson forest: region borders follow random walks, so they look like ordinary maze walls.
+    # 3. Grow the false regions to their share of the free cells first, so each is a real maze of its own.
+    free = cells - len(route)
+    quota = max(1, round(DECOY_QUOTA * free / len(decoy_labels)))
+    _grow_decoys(labels, edges, {label: quota for label in decoy_labels}, rows, columns, rng, allowed)
+    # 4. Multi-root Wilson forest: region borders follow random walks, so they look like ordinary maze walls.
     order = [node for node in range(cells) if node not in labels]
     rng.shuffle(order)
     for node in order:
@@ -452,10 +530,12 @@ def _hard_round(index: int, level: dict, rng: random.Random, answer: int) -> Rou
             labels[cell] = label
         edges.extend(sorted(pair) for pair in zip(walk, walk[1:]))
     edges.sort()
-    if len(edges) != cells - 3 or routes(start, edges).get(target) != route:
+    if len(edges) != cells - exit_count or routes(start, edges).get(target) != route:
         return None
     component_sizes = [len(routes(node, edges)) for node in exits]
-    if min(size for label, size in enumerate(component_sizes) if label != answer) < level["false_share"] * cells:
+    if min(size for label, size in enumerate(component_sizes) if label != answer) < MIN_DECOY_SHARE * quota:
+        return None
+    if any(decoy_reach(set(routes(exits[label], edges)), rows, columns) < DECOY_REACH for label in decoy_labels):
         return None
     if longest_straight_wall(edges, rows, columns) > level["max_straight"]:
         return None
@@ -469,34 +549,40 @@ def _hard_round(index: int, level: dict, rng: random.Random, answer: int) -> Rou
     if branches < level["route_branches"]:
         return None
     return RoundSpec(index, "find_the_exit", {
-        "layout": HARD_LAYOUT, "rows": rows, "columns": columns, "start": start, "exits": exits,
+        "layout": HARD_LAYOUT, "maze_version": MAZE_VERSION, "rows": rows, "columns": columns, "start": start, "exits": exits,
         "edges": edges, "route": route, "correct_index": answer, "level": index + 1,
         "route_metrics": grid_metrics(route, columns), "route_branch_points": branches,
         "exit_component_sizes": component_sizes, "decoy_ends": decoy_ends,
+        "thinking_seconds": level_thinking(rows, columns),
     }, answer)
 
 
 def _generate_hard(seed: int, count: int) -> VideoSpec:
-    rng = random.Random(f"exit_hard_v3:{seed}:{count}")
+    rng = random.Random(f"exit_hard_v5:{seed}:{count}")
     rounds, used = [], set()
-    # Answers come from shuffled [0, 1, 2] blocks: every exit is correct at least once per video and
-    # the choice is fixed before retries, so acceptance rates cannot bias it.
-    answer_rng = random.Random(f"exit_hard_answers:{seed}:{count}")
-    answers: list[int] = []
-    while len(answers) < count:
-        block = [0, 1, 2]
-        answer_rng.shuffle(block)
-        answers.extend(block)
+    # Answers come from shuffled blocks per exit count (every exit is correct as often as the others), fixed before
+    # retries, so acceptance rates cannot bias them.
+    answer_rng = random.Random(f"exit_hard_answers_v2:{seed}:{count}")
+    blocks: dict[int, list[int]] = {}
+
+    def next_answer(exit_count: int) -> int:
+        if not blocks.get(exit_count):
+            blocks[exit_count] = list(range(exit_count))
+            answer_rng.shuffle(blocks[exit_count])
+        return blocks[exit_count].pop()
+
     for index in range(count):
         level = HARD_LEVELS[level_tier(index, count)]
-        answer = answers[index]
+        answer = next_answer(level.get("exits", 3))
         # Keep several valid mazes and publish the most deceptive: the largest smallest decoy region.
         candidates = []
-        for _ in range(8000):
+        for attempt in range(40000):  # the large grids are rarely accepted: keep trying until at least one is found
+            if attempt >= 8000 and candidates:
+                break
             item = _hard_round(index, level, rng, answer)
             if item is not None and item.fingerprint() not in used:
                 candidates.append(item)
-                if len(candidates) == HARD_CANDIDATES:
+                if len(candidates) == level.get("candidates", HARD_CANDIDATES):
                     break
         if not candidates:
             raise RuntimeError("Could not generate a deceptive hard maze")
@@ -504,9 +590,14 @@ def _generate_hard(seed: int, count: int) -> VideoSpec:
                                                      if label != item.answer), len(item.data["route"])))
         used.add(best.fingerprint())
         rounds.append(best)
-    stable_id = sha256(f"exit_hard_v3:{seed}:{count}".encode()).hexdigest()[:12]
+    stable_id = sha256(f"exit_hard_v5:{seed}:{count}".encode()).hexdigest()[:12]
     return VideoSpec(f"PZ-{stable_id}", "find_the_exit", seed, "hard", "paths", tuple(rounds),
-                     PUZZLE_FIT_INTRO_DURATION, round_duration("find_the_exit", "hard"), PUZZLE_FIT_OUTRO_DURATION)
+                     PUZZLE_FIT_INTRO_DURATION, exit_hard_average_round(count), PUZZLE_FIT_OUTRO_DURATION)
+
+
+def hard_average_round(rounds) -> float:
+    """VideoSpec.round_duration for Hard: the average of its levels, so the total duration stays exact."""
+    return round(sum(exit_hard_round(round_thinking(item.data)) for item in rounds) / max(1, len(rounds)), 4)
 
 
 def _hard_errors(data: dict, answer: int) -> list[str]:
@@ -518,12 +609,15 @@ def _hard_errors(data: dict, answer: int) -> list[str]:
     start, exits, edges = data.get("start"), data.get("exits", []), data.get("edges", [])
     if not isinstance(start, int) or start // columns != rows - 1:
         return ["hard maze start must sit on the bottom row"]
-    if len(exits) != 3 or len(set(exits)) != 3 or any(node not in range(columns) for node in exits) or exits != sorted(exits):
-        return ["hard maze needs three distinct top exits"]
+    version = data.get("maze_version", 2)
+    exit_count = level.get("exits", 3) if version >= 3 else 3
+    if (len(exits) != exit_count or len(set(exits)) != exit_count or any(node not in range(columns) for node in exits)
+            or exits != sorted(exits)):
+        return [f"hard maze needs {exit_count} distinct top exits"]
     if any(len(edge) != 2 or edge[0] not in range(cells) or edge[1] not in grid_neighbors(edge[0], rows, columns) for edge in edges):
         return ["maze passages must join adjacent cells"]
-    if len(edges) != cells - 3 or len({tuple(sorted(edge)) for edge in edges}) != len(edges):
-        return ["maze must contain three disjoint trees"]
+    if len(edges) != cells - exit_count or len({tuple(sorted(edge)) for edge in edges}) != len(edges):
+        return ["maze must contain one disjoint tree per exit"]
     parent = list(range(cells))
 
     def root(node: int) -> int:
@@ -549,6 +643,13 @@ def _hard_errors(data: dict, answer: int) -> list[str]:
     false_sizes = [size for index, size in enumerate(component_sizes) if index != answer]
     if data.get("exit_component_sizes") != component_sizes or min(false_sizes) < level["false_share"] * cells:
         return ["false exits must own convincingly large regions"]
+    if version >= 3:
+        quota = max(1, round(DECOY_QUOTA * (cells - len(data.get("route") or [])) / (exit_count - 1)))
+        if min(false_sizes) < MIN_DECOY_SHARE * quota:
+            return ["a false region is small enough to rule out by tracing back from its exit"]
+        if any(decoy_reach(set(routes(node, edges)), rows, columns) < DECOY_REACH
+               for index, node in enumerate(exits) if index != answer):
+            return ["a false region does not reach deep enough toward the start"]
     if longest_straight_wall(edges, rows, columns) > level["max_straight"]:
         return ["a long unbroken wall would give away a sealed region"]
     route_cells = set(route)
@@ -559,6 +660,8 @@ def _hard_errors(data: dict, answer: int) -> list[str]:
     branches = _degree_branches(edges, route)
     if branches < level["route_branches"] or data.get("route_branch_points") != branches:
         return ["maze does not have enough route branch competition"]
+    if "thinking_seconds" in data and (level not in HARD_LEVELS or data["thinking_seconds"] != level_thinking(rows, columns)):
+        return ["maze thinking time does not match its level"]
     return []
 
 

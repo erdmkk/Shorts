@@ -3,7 +3,6 @@ from __future__ import annotations
 from hashlib import sha256
 import math
 import random
-
 from ..config import DEFAULT_ROUNDS, INTRO_DURATION, OUTRO_DURATION, round_duration
 from ..models import RoundSpec, VideoSpec
 
@@ -230,7 +229,16 @@ def _routing(rng: random.Random, difficulty: str) -> tuple[list[int], int, dict[
     raise RuntimeError("Could not create a balanced Line Follow route")
 
 
-def generate(seed: int, difficulty: str = "easy", theme: str = "lines", round_count: int | None = None) -> VideoSpec:
+# ---------------------------------------------------------------- current: free-form tangle (see line_tangle)
+
+def generate(seed: int, difficulty: str | None = None, theme: str = "lines", round_count: int | None = None) -> VideoSpec:
+    """Current Line Follow (Weave V7, see line_weave): produced only in Hard; every video ramps up level by level."""
+    from . import line_weave
+    return line_weave.generate(seed, round_count or DEFAULT_ROUNDS["line_follow"])
+
+
+def generate_legacy(seed: int, difficulty: str = "easy", theme: str = "lines", round_count: int | None = None) -> VideoSpec:
+    """The earlier light-theme Line Follow (routing v8); kept so old records stay valid."""
     difficulty = difficulty if difficulty in DIFFICULTY_RULES else "easy"
     count = round_count or DEFAULT_ROUNDS["line_follow"]
     rng = random.Random(f"line_v8:{seed}:{difficulty}:{count}")
@@ -258,6 +266,12 @@ def generate(seed: int, difficulty: str = "easy", theme: str = "lines", round_co
 
 
 def errors(data: dict, answer: int) -> list[str]:
+    if data.get("version") == "weave_v7":
+        from . import line_weave
+        return line_weave.validate(data, answer)
+    if data.get("version") == "tangle_v4":  # earlier samples; they can no longer be rendered
+        from . import line_tangle
+        return line_tangle.validate(data, answer)
     path_count, swaps, source = data.get("path_count"), data.get("swaps", []), data.get("source")
     difficulty = {3: "easy", 4: "medium", 5: "hard"}.get(path_count)
     if difficulty is None or len(swaps) != DIFFICULTY_RULES[difficulty]["crossings"]:

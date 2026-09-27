@@ -70,9 +70,16 @@ def elimination_order(data: dict) -> list[int]:
 
 # ---------------------------------------------------------------- artwork
 
-def _palette_array(palette_index: int) -> np.ndarray:
+def _palette_array(palette_index: int, palette: str | None = None) -> np.ndarray:
+    from ..palette import recolor
     colors = PUZZLE_FIT_ART_PALETTES[palette_index % len(PUZZLE_FIT_ART_PALETTES)]
-    return np.array([_rgb(color) for color in colors], dtype=np.float32)
+    return np.array([_rgb(recolor(color, palette)) for color in colors], dtype=np.float32)
+
+
+def _palette_key(key: str) -> str:
+    """Cache keys for anything painted with object colours include the active object palette."""
+    from ..palette import active
+    return f"{key}:{active()}"
 
 
 def _cycle(colors: np.ndarray, value: np.ndarray) -> np.ndarray:
@@ -86,11 +93,16 @@ def _cycle(colors: np.ndarray, value: np.ndarray) -> np.ndarray:
     return colors[low] * (1 - blend) + colors[high] * blend
 
 
-@lru_cache(maxsize=12)
 def artwork(style: str, palette_index: int, art_seed: int, width: int, height: int) -> Image.Image:
+    from ..palette import active
+    return _artwork(style, palette_index, art_seed, width, height, active())
+
+
+@lru_cache(maxsize=12)
+def _artwork(style: str, palette_index: int, art_seed: int, width: int, height: int, palette: str | None) -> Image.Image:
     """Deterministic resolution-independent abstract artwork that is cut into the round's jigsaw pieces."""
     rng = random.Random(art_seed)
-    colors = _palette_array(palette_index)
+    colors = _palette_array(palette_index, palette)
     v, u = np.mgrid[0:height, 0:width].astype(np.float32)
     u /= max(1, width - 1)
     v /= max(1, height - 1)
@@ -201,11 +213,11 @@ def _data_items(data: dict) -> tuple:
 
 
 def piece_sprite(round_spec: RoundSpec, slot: int, edges: list[int], difficulty: str, scale: float) -> Image.Image:
-    return _sprite(round_spec.fingerprint(), slot, tuple(edges), _data_items(round_spec.data), difficulty, round(scale, 4))
+    return _sprite(_palette_key(round_spec.fingerprint()), slot, tuple(edges), _data_items(round_spec.data), difficulty, round(scale, 4))
 
 
 def piece_glow(round_spec: RoundSpec, slot: int, edges: list[int], difficulty: str, scale: float, radius: int) -> Image.Image:
-    return _glow_cached(round_spec.fingerprint(), slot, tuple(edges), _data_items(round_spec.data), difficulty,
+    return _glow_cached(_palette_key(round_spec.fingerprint()), slot, tuple(edges), _data_items(round_spec.data), difficulty,
                         round(scale, 4), PALETTE["success"], radius)
 
 
@@ -226,12 +238,15 @@ _ACTIVE_THEME = {"id": "violet"}
 
 
 def background_theme(spec: VideoSpec) -> str:
-    """The dark background tone of a video: random per video, fixed for its frames and cover."""
-    return dark_theme_for(spec.puzzle_type, spec.seed)
+    """The dark background tone of a video: the creator's choice or random per video, fixed for its frames and cover."""
+    from ..palette import background_for
+    return background_for(spec)
 
 
 def use_theme(spec: VideoSpec) -> None:
+    from .. import palette
     _ACTIVE_THEME["id"] = background_theme(spec)
+    palette.use(spec)
 
 
 def active_theme() -> str:
@@ -494,7 +509,7 @@ def _snap_burst(image: Image.Image, center: tuple[float, float], cell: float, si
 
 def _round_image(spec: VideoSpec, round_index: int, size: tuple[int, int]) -> Image.Image:
     round_spec = spec.rounds[round_index]
-    key = f"{spec.id}:{spec.difficulty}:{round_spec.fingerprint()}"
+    key = _palette_key(f"{spec.id}:{spec.difficulty}:{round_spec.fingerprint()}")
     _ROUNDS[key] = round_spec
     return _round_layer(key, spec.difficulty, size, active_theme()).copy()
 

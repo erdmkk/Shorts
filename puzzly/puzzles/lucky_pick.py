@@ -459,6 +459,28 @@ def maze_movement_steps(geometry: dict[str, Any], targets: list[dict[str, Any]],
 
 def generate(seed: int, difficulty: str | None = None, theme: str = "lucky_pick",
              round_count: int | None = None) -> VideoSpec:
+    """Current Lucky Pick: the snake chase in an open arena (see lucky_snake)."""
+    from . import lucky_snake
+    if round_count not in (None, 1):
+        raise ValueError("Lucky Pick contains one game")
+    rng = random.Random(f"lucky_pick_snake_v1:{seed}")
+    shape_id = rng.choice(SHAPES)
+    color_ids = list(COLORS); rng.shuffle(color_ids)
+    data = lucky_snake.game_data(seed, shape_id, COLORS, color_ids)
+    game = RoundSpec(0, "lucky_pick", data, data["winner_index"])
+    stable_id = sha256(f"lucky_pick_snake_v1:{seed}".encode()).hexdigest()[:12]
+    return VideoSpec(f"PZ-{stable_id}", "lucky_pick", seed, None, "lucky_pick", (game,),
+                     PUZZLE_FIT_INTRO_DURATION, data["timeline_duration"], PUZZLE_FIT_OUTRO_DURATION)
+
+
+def is_snake(data: dict[str, Any]) -> bool:
+    from .lucky_snake import VERSION
+    return data.get("map_version") == VERSION
+
+
+def generate_maze(seed: int, difficulty: str | None = None, theme: str = "lucky_pick",
+                  round_count: int | None = None) -> VideoSpec:
+    """The earlier neon-maze Lucky Pick; kept so saved maze videos stay valid and can be re-rendered."""
     if round_count not in (None, 1):
         raise ValueError("Lucky Pick contains one game")
     rng = random.Random(f"lucky_pick_neon_maze_v1:{seed}")
@@ -496,6 +518,9 @@ def is_maze(data: dict[str, Any]) -> bool:
 
 
 def errors(data: dict[str, Any], answer: Any) -> list[str]:
+    if is_snake(data):
+        from . import lucky_snake
+        return lucky_snake.errors(data, answer, COLORS, SHAPES)
     if not is_maze(data):
         return _legacy_errors(data, answer)
     result: list[str] = []

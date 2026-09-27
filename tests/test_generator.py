@@ -15,7 +15,7 @@ def test_active_mixed_distribution_and_unique_fingerprints(tmp_path) -> None:
 
 def test_auto_defaults_and_explicit_round_counts() -> None:
     for puzzle_type, default in DEFAULT_ROUNDS.items():
-        assert default == (1 if puzzle_type in ("memory_challenge", "lucky_pick", "hidden_motion_hunt", "bounce_arena") else (4 if puzzle_type in ("find_the_exit", "line_follow", "flash_count", "cube_count") else (3 if puzzle_type == "quick_math" else 5)))
+        assert default == (1 if puzzle_type in ("memory_challenge", "lucky_pick", "hidden_motion_hunt", "bounce_arena") else (4 if puzzle_type in ("find_the_exit", "flash_count", "cube_count") else (3 if puzzle_type == "quick_math" else 5)))
         if puzzle_type in ("hidden_motion_hunt", "bounce_arena"):
             continue
         assert generate_spec(puzzle_type, 1).round_count == default
@@ -24,12 +24,11 @@ def test_auto_defaults_and_explicit_round_counts() -> None:
         for requested in (3, 4, 5):
             spec = generate_spec(puzzle_type, 1, challenges=requested)
             assert spec.round_count == requested
-            from puzzly.config import FLASH_INTRO_DURATION
-            intro = FLASH_INTRO_DURATION if puzzle_type == "flash_count" else INTRO_DURATION
+            intro = INTRO_DURATION
             outro = OUTRO_DURATION
-            if puzzle_type in ("puzzle_fit", "cube_count", "quick_math"):
-                intro, outro = PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION
-            if puzzle_type == "quick_math":  # levels last different times; see test_quick_math
+            if puzzle_type in ("puzzle_fit", "cube_count", "flash_count", "quick_math"):
+                intro, outro = (2.0 if puzzle_type == "flash_count" else PUZZLE_FIT_INTRO_DURATION), PUZZLE_FIT_OUTRO_DURATION
+            if puzzle_type in ("quick_math", "line_follow"):  # levels last different times; see their own tests
                 continue
             assert spec.total_duration == pytest.approx(intro + requested * round_duration(puzzle_type, "easy") + outro)
     assert THINKING_DURATION == 4.0
@@ -40,17 +39,14 @@ def test_difficulty_timing_and_dynamic_durations() -> None:
         if kind in ("hidden_motion_hunt", "bounce_arena"):
             continue
         for difficulty, seconds in (("easy", 5), ("medium", 6), ("hard", 7)):
-            expected = {"easy": 10, "medium": 9, "hard": 8}[difficulty] if kind == "quick_math" else 5 if kind == "lucky_pick" else (3 if kind in ("memory_challenge", "flash_count", "cube_count") else ((8 if kind == "find_the_exit" and difficulty == "hard" else seconds) if kind in ("find_the_exit", "line_follow") else (6 if kind == "puzzle_fit" and difficulty == "hard" else 4)))
+            expected = {"easy": 10, "medium": 9, "hard": 8}[difficulty] if kind == "quick_math" else 5 if kind == "lucky_pick" else 7 if kind == "line_follow" else (3 if kind in ("memory_challenge", "flash_count", "cube_count") else ((8 if kind == "find_the_exit" and difficulty == "hard" else seconds) if kind in ("find_the_exit", "line_follow") else (5 if kind == "puzzle_fit" else 4)))
             assert thinking_duration(kind, difficulty) == expected
             spec = generate_spec(kind, 93, difficulty)
-            from puzzly.config import FLASH_INTRO_DURATION
             intro = (MEMORY_INTRO_DURATION if kind == "memory_challenge" else
-                     (FLASH_INTRO_DURATION if kind == "flash_count" else
-                      (PUZZLE_FIT_INTRO_DURATION if kind == "lucky_pick" else
-                       (PUZZLE_FIT_INTRO_DURATION if kind == "puzzle_fit" else INTRO_DURATION))))
-            adult_look = kind in ("puzzle_fit", "cube_count", "memory_challenge", "lucky_pick", "quick_math") or (kind == "find_the_exit" and difficulty == "hard")
+                     (PUZZLE_FIT_INTRO_DURATION if kind in ("lucky_pick", "puzzle_fit") else INTRO_DURATION))
+            adult_look = kind in ("puzzle_fit", "cube_count", "flash_count", "memory_challenge", "lucky_pick", "quick_math", "line_follow") or (kind == "find_the_exit" and difficulty == "hard")
             if adult_look:
-                intro = PUZZLE_FIT_INTRO_DURATION
+                intro = 2.0 if kind == "flash_count" else PUZZLE_FIT_INTRO_DURATION  # its ARE YOU READY? screen
             outro = PUZZLE_FIT_OUTRO_DURATION if adult_look else OUTRO_DURATION
             expected_duration = (intro + spec.rounds[0].data["timeline_duration"] + outro
                                  if kind == "lucky_pick" else

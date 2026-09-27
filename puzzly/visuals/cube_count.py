@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 
 from ..config import (CUBE_BUILD, CUBE_COLORS, CUBE_COUNT_UP, CUBE_HIDE, CUBE_RETURN, CUBE_THINKING)
 from ..models import RoundSpec, VideoSpec
-from ..puzzles.cube_count import cube_faces, draw_order, geometry, project
+from ..puzzles.cube_count import cube_faces, cubes_in, draw_order, geometry, project, size_of, stack_order
 from .easing import ease_in_out, ease_out_back, ease_out_cubic
 from .puzzle_fit import PALETTE, _background, _clamp, _level_header, _rgb, _snap_burst, _text, _timer, active_theme, draw_puzzle_fit_outro
 from .text import fitted_font, font
@@ -28,7 +28,8 @@ def _mix(color: str, other: tuple[int, int, int], amount: float) -> tuple[int, i
 
 
 def face_colors(color_id: str) -> dict[str, tuple[int, int, int]]:
-    base = CUBE_COLORS.get(color_id, CUBE_COLORS["violet"])
+    from ..palette import object_color
+    base = object_color(CUBE_COLORS.get(color_id, CUBE_COLORS["violet"]))
     return {"top": _mix(base, (255, 255, 255), .38), "left": _rgb(base), "right": _mix(base, (0, 0, 0), .32)}
 
 
@@ -59,19 +60,22 @@ def _platform(image: Image.Image, geo: dict[str, float], scale: float) -> None:
 
 
 def _cube(draw: ImageDraw.ImageDraw, geo: dict[str, float], i: int, j: int, k: int, colors: dict, scale: float,
-          lift: float = 0.0, top: bool = True, width: int = 3) -> None:
-    faces = cube_faces(geo, i, j, k)
+          lift: float = 0.0, top: bool = True, width: int = 3, size: int = 1) -> None:
+    """One cube, or a big block (size 2): a single box with no inner edges."""
+    faces = cube_faces(geo, i, j, k, size)
     shift = lambda points: [(x * scale, (y - lift) * scale) for x, y in points]
     for name in ("left", "right") + (("top",) if top else ()):
         draw.polygon(shift(faces[name]), fill=colors[name], outline=EDGE, width=width)
 
 
 def _footprint(image: Image.Image, geo: dict[str, float], cell: list[int], scale: float, color: tuple[int, int, int],
-               alpha: int, grow: float) -> None:
+               alpha: int, grow: float, size: int = 1) -> None:
     """Diamond around a stack's base on the floor: contact shadow at rest, glowing frame while counting."""
     i, j = cell
-    center = project(geo, i + .5, j + .5, 0)
-    corners = [project(geo, i, j, 0), project(geo, i + 1, j, 0), project(geo, i + 1, j + 1, 0), project(geo, i, j + 1, 0)]
+    s = size
+    center = project(geo, i + s / 2, j + s / 2, 0)
+    corners = [project(geo, i, j, 0), project(geo, i + s, j, 0), project(geo, i + s, j + s, 0), project(geo, i, j + s, 0)]
+    grow = 1 + (grow - 1) / s  # the same margin around a big block
     points = [((center[0] + (x - center[0]) * grow) * scale, (center[1] + (y - center[1]) * grow) * scale) for x, y in corners]
     ImageDraw.Draw(image, "RGBA").polygon(points, fill=color + (alpha,))
 
@@ -82,8 +86,8 @@ def _cubes(image: Image.Image, geo: dict[str, float], stacks: list[dict], colors
         if (lifts or {}).get((stack_index, 0), 0.0) is None:
             continue
         if glow and stack_index in glow:
-            _footprint(image, geo, stack["cell"], scale, _rgb(PALETTE["accent"]), round(150 * glow[stack_index]), 1.32)
-        _footprint(image, geo, stack["cell"], scale, (4, 6, 16), 110, 1.14)
+            _footprint(image, geo, stack["cell"], scale, _rgb(PALETTE["accent"]), round(150 * glow[stack_index]), 1.32, size_of(stack))
+        _footprint(image, geo, stack["cell"], scale, (4, 6, 16), 110, 1.14, size_of(stack))
     draw = ImageDraw.Draw(image)
     width = max(2, round(2.6 * scale))
     for stack_index, level in draw_order(stacks):
@@ -91,7 +95,7 @@ def _cubes(image: Image.Image, geo: dict[str, float], stacks: list[dict], colors
         if lift is None:
             continue
         i, j = stacks[stack_index]["cell"]
-        _cube(draw, geo, i, j, level, colors, scale, lift, top=True, width=width)
+        _cube(draw, geo, i, j, level, colors, scale, lift, top=True, width=width, size=size_of(stacks[stack_index]))
 
 
 _ROUNDS: dict[str, RoundSpec] = {}
@@ -116,7 +120,8 @@ def _rest_layer(key: str, size: tuple[int, int], theme: str = "violet") -> Image
 
 def _register(spec: VideoSpec, round_index: int) -> str:
     item = spec.rounds[round_index]
-    key = f"{spec.id}:{item.fingerprint()}"
+    from ..palette import active
+    key = f"{spec.id}:{item.fingerprint()}:{active()}"  # the cached cube layers are painted in the object palette
     _ROUNDS[key] = item
     return key
 
@@ -139,27 +144,28 @@ def _drop_lifts(stacks: list[dict], progress_time: float, total_time: float, hei
 
 def _count_state(stacks: list[dict], local: float, times: dict[str, float]) -> tuple[int, int | None]:
     """(cubes counted so far, stack currently highlighted)."""
-    order = sorted(range(len(stacks)), key=lambda index: (sum(stacks[index]["cell"]), stacks[index]["cell"][0]))
+    order = stack_order(stacks)
     slot = CUBE_COUNT_UP / max(1, len(order))
     elapsed = local - times["count_start"]
     if elapsed < 0:
         return 0, None
     done = min(len(order), int(elapsed / slot) + 1)
-    counted = sum(stacks[index]["height"] for index in order[:done])
+    counted = sum(cubes_in(stacks[index]) for index in order[:done])  # a big block counts as one
     current = order[done - 1] if elapsed < CUBE_COUNT_UP else None
     return counted, current
 
 
 def _stack_label(image: Image.Image, geo: dict[str, float], stack: dict, scale: float, strength: float, active: bool) -> None:
     i, j = stack["cell"]
-    x, y = project(geo, i + .5, j + .5, stack["height"])
+    half = size_of(stack) / 2
+    x, y = project(geo, i + half, j + half, stack["height"])
     y -= geo["cube_h"] * .55
     radius = 30 if active else 24
     draw = ImageDraw.Draw(image, "RGBA")
     fill = _rgb(PALETTE["accent"] if active else PALETTE["surface"]) + (round(235 * strength),)
     draw.ellipse(((x - radius) * scale, (y - radius) * scale, (x + radius) * scale, (y + radius) * scale),
                  fill=fill, outline=_rgb(PALETTE["text_light"]) + (round(200 * strength),), width=max(1, round(3 * scale)))
-    _text(image, (x * scale, y * scale), str(stack["height"]), font(round((34 if active else 28) * scale)),
+    _text(image, (x * scale, y * scale), str(cubes_in(stack)), font(round((34 if active else 28) * scale)),
           PALETTE["background"] if active else PALETTE["text_light"], strength)
 
 
@@ -194,7 +200,7 @@ def draw_cube_round(spec: VideoSpec, round_index: int, local: float, size: tuple
         _cubes(image, geo, stacks, colors, scale, _drop_lifts(stacks, local - times["think_end"], CUBE_RETURN, 140))
     else:
         counted, current = _count_state(stacks, local, times)
-        order = sorted(range(len(stacks)), key=lambda index: (sum(stacks[index]["cell"]), stacks[index]["cell"][0]))
+        order = stack_order(stacks)
         slot = CUBE_COUNT_UP / max(1, len(order))
         glow = {index: (1.0 if index == current else .45) for position, index in enumerate(order)
                 if local - times["count_start"] - position * slot >= 0}

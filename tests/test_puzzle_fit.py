@@ -30,17 +30,16 @@ def test_puzzle_fit_is_deterministic() -> None:
 
 
 def test_visual_state_progression_teaches_the_game() -> None:
-    assert [visual_state(moment) for moment in (0.1, 0.5, 2.0, 4.4, 4.8, 5.0, 5.4)] == [
+    assert [visual_state(moment) for moment in (0.1, 0.5, 2.0, 5.4, 5.8, 6.0, 6.4)] == [
         "choices", "thinking", "thinking", "eliminating", "eliminating", "moving", "solved",
     ]
 
 
-def test_hard_uses_nine_choices_six_second_thinking_and_complex_board() -> None:
-    assert thinking_duration("puzzle_fit", "easy") == thinking_duration("puzzle_fit", "medium") == 4.0
-    assert thinking_duration("puzzle_fit", "hard") == 6.0
-    assert round_duration("puzzle_fit", "hard") == round_duration("puzzle_fit", "medium") + 2.0
-    assert visual_state(6.2, "hard") == "thinking"
-    assert visual_state(6.4, "hard") == "eliminating"
+def test_hard_uses_nine_choices_five_second_thinking_and_complex_board() -> None:
+    assert all(thinking_duration("puzzle_fit", difficulty) == 5.0 for difficulty in ("easy", "medium", "hard"))
+    assert round_duration("puzzle_fit", "hard") == round_duration("puzzle_fit", "medium") == 7.2
+    assert visual_state(5.3, "hard") == "thinking"
+    assert visual_state(5.4, "hard") == "eliminating"
     for difficulty, expected_bounds in (("easy", CARD_BOUNDS), ("medium", CARD_BOUNDS), ("hard", HARD_CARD_BOUNDS)):
         spec = generate(120, difficulty)
         assert spec.round_duration == round_duration("puzzle_fit", difficulty)

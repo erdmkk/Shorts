@@ -16,10 +16,10 @@ PUZZLE_LABELS = {
 
 ACTIVE_PUZZLE_TYPES = (
     "quick_math", "missing_number", "puzzle_fit", "find_the_exit", "memory_challenge", "flash_count", "lucky_pick",
-    "hidden_motion_hunt", "bounce_arena", "cube_count",
-)
+    "hidden_motion_hunt", "bounce_arena", "cube_count", "line_follow",
+)  # Line Follow was removed once and brought back by the user (Weave V5, Hard only)
 MIXED_PUZZLE_TYPES = tuple(kind for kind in ACTIVE_PUZZLE_TYPES if kind not in ("hidden_motion_hunt", "bounce_arena"))
-EXPERIMENTAL_PUZZLE_TYPES = ("line_follow",)
+EXPERIMENTAL_PUZZLE_TYPES: tuple[str, ...] = ()
 SUPPORTED_PUZZLE_TYPES = ACTIVE_PUZZLE_TYPES + EXPERIMENTAL_PUZZLE_TYPES
 
 

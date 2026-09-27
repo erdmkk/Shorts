@@ -11,7 +11,8 @@ from puzzly.config import (LUCKY_APPEARANCE_DURATION, LUCKY_SELECTION_DURATION, 
 from puzzly.generator import generate_spec, mixed_types
 from puzzly.puzzles.lucky_pick import (CHOMP_AT, COLORS, CORRIDOR_WIDTH, EAT_ANTICIPATION, EAT_BITE, EAT_DURATION,
                                        MAP_VERSION, MAZE_MIN_POCKETS, POST_EAT, SHAPES, STOP_GAP, TARGET_COUNT,
-                                       TARGET_SIZE, TRAVEL_RAMP, TRAVEL_SPEED, build_maze, errors, generate,
+                                       TARGET_SIZE, TRAVEL_RAMP, TRAVEL_SPEED, build_maze, errors,
+                                       generate_maze as generate,  # these tests cover the earlier maze version
                                        maze_errors, path_length, point_on_path, travel_distance)
 from puzzly.registry import ACTIVE_PUZZLE_TYPES, EXPERIMENTAL_PUZZLE_TYPES, MIXED_PUZZLE_TYPES
 from puzzly.renderer import render_cover, render_frame, save_cover
@@ -118,6 +119,36 @@ def test_creature_and_maze_scale() -> None:
     assert closed.getbbox() and closed.tobytes() != open_mouth.tobytes()
 
 
+def test_selection_rings_only_show_while_the_viewer_picks() -> None:
+    from puzzly.config import LUCKY_APPEARANCE_DURATION, LUCKY_SELECTION_DURATION
+    from puzzly.visuals.lucky_pick import RING_FADE, ring_opacity
+    end = LUCKY_APPEARANCE_DURATION + LUCKY_SELECTION_DURATION
+    assert ring_opacity("idle", .1) == ring_opacity("selection", end - .01) == 1.0
+    assert 0 < ring_opacity("travel", end + RING_FADE / 2) < 1
+    assert ring_opacity("travel", end + RING_FADE) == 0 and ring_opacity("eat", end + 3) == 0 and ring_opacity("winner", end + 15) == 0
+
+
+def test_creature_is_an_adult_design_with_a_glowing_eye() -> None:
+    """The devourer's visor glows red and its lit body stays dark: no bright cartoon eyes or pastel skin."""
+    import numpy as np
+    from puzzly.visuals.lucky_pick import EYE
+    sprite = np.asarray(creature(64).convert("RGBA"), dtype=np.float32)
+    opaque = sprite[..., 3] > 250
+    body_brightness = float(sprite[..., :3][opaque].mean())
+    red = np.array(tuple(int(EYE[index:index + 2], 16) for index in (1, 3, 5)), np.float32)
+    glowing = np.linalg.norm(sprite[..., :3] - red, axis=2) < 60
+    assert body_brightness < 90 and glowing[opaque].sum() > 150
+
+
+def test_lucky_cover_redraws_the_maze_and_creature_in_3d() -> None:
+    from puzzly.covers import LUCKY_PANEL, _template, has_template
+    spec = generate(88)
+    assert has_template(spec)
+    board = _template(spec)["content"]
+    # The card is drawn directly at 2x from the maze panel, not cut from a video frame.
+    assert board.size == ((LUCKY_PANEL[2] - LUCKY_PANEL[0]) * 2, (LUCKY_PANEL[3] - LUCKY_PANEL[1]) * 2)
+
+
 def test_lucky_fingerprint_tracks_identity() -> None:
     spec = generate(88); game = spec.rounds[0]
     changed = dict(game.data); changed["shape_id"] = "circle" if changed["shape_id"] != "circle" else "star"
@@ -138,8 +169,8 @@ def test_lucky_frames_and_cover(tmp_path) -> None:
         assert image.format == "JPEG" and image.size == (1080, 1920); image.verify()
 
 
-def test_lucky_is_active_and_line_follow_stays_disabled() -> None:
+def test_lucky_is_active() -> None:
     assert "lucky_pick" in ACTIVE_PUZZLE_TYPES
-    assert "line_follow" in EXPERIMENTAL_PUZZLE_TYPES and "line_follow" not in ACTIVE_PUZZLE_TYPES
+    assert "line_follow" in ACTIVE_PUZZLE_TYPES and "line_follow" not in EXPERIMENTAL_PUZZLE_TYPES
     assert set(mixed_types(700, random.Random(10))) == set(MIXED_PUZZLE_TYPES)
     assert generate_spec("lucky_pick", 17).difficulty is None

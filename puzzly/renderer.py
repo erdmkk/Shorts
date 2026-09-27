@@ -19,8 +19,9 @@ from .validation import validate_spec
 from .visuals.backgrounds import create_background
 from .visuals.paths import draw_path_puzzle
 from .visuals.memory import COVER_TIME as MEMORY_COVER_TIME, draw_memory_frame
-from .visuals.flash_count import draw_flash_intro, draw_flash_round
+from .visuals.flash_count import draw_flash_frame
 from .visuals.lucky_pick import COVER_TIME as LUCKY_COVER_TIME, draw_lucky_frame
+from .visuals.line_follow import COVER_TIME as LINE_COVER_TIME, draw_line_frame, uses_line_look
 from .visuals.quick_math import COVER_TIME as QUICK_MATH_COVER_TIME, draw_quick_math_frame
 from .visuals.puzzle_fit import use_theme
 from .visuals.hidden_motion import draw_hidden_motion
@@ -39,7 +40,8 @@ LOGGER = logging.getLogger(__name__)
 @lru_cache(maxsize=24)
 def _tutorial_round(kind: str, seed: int, excluded: tuple[str, ...]) -> RoundSpec:
     from .puzzles import puzzle_fit, find_the_exit, line_follow
-    factory = {"puzzle_fit": puzzle_fit.generate, "find_the_exit": find_the_exit.generate, "line_follow": line_follow.generate}[kind]
+    factory = {"puzzle_fit": puzzle_fit.generate, "find_the_exit": find_the_exit.generate,
+               "line_follow": line_follow.generate_legacy}[kind]  # only the earlier light-theme look uses tutorials
     for offset in range(100):
         for item in factory(-seed - 9000 - offset, "easy", round_count=3).rounds:
             if item.fingerprint() not in excluded:
@@ -110,8 +112,6 @@ def _intro_frame(spec: VideoSpec, t: float, size: tuple[int, int], base: Image.I
         crop = tutorial.crop(_bounds((100, 280, 980, 1480), size))
         crop = crop.resize((_scaled(550, size), _scaled(750, size)), Image.Resampling.LANCZOS)
         image.paste(crop, scale_point((265, 240), size))
-    elif spec.puzzle_type == "flash_count":
-        draw_flash_intro(image, spec, t, palette)
     if spec.puzzle_type in ("quick_math", "missing_number"):
         diameter = _scaled(210 * max(0.15, progress), size)
         draw_brand_mark(image, scale_point((540, 880), size), diameter, palette,
@@ -189,8 +189,12 @@ def render_frame(spec: VideoSpec, t: float, size: tuple[int, int], background: I
         return draw_puzzle_fit_frame(spec, t, size)
     if uses_exit_hard_look(spec):
         return draw_exit_hard_frame(spec, t, size)
+    if uses_line_look(spec):
+        return draw_line_frame(spec, t, size)
     if spec.puzzle_type == "cube_count":
         return draw_cube_frame(spec, t, size)
+    if spec.puzzle_type == "flash_count":
+        return draw_flash_frame(spec, t, size)
     if spec.puzzle_type == "memory_challenge":
         return draw_memory_frame(spec, t, size)
     if spec.puzzle_type == "lucky_pick":
@@ -225,8 +229,6 @@ def render_frame(spec: VideoSpec, t: float, size: tuple[int, int], background: I
         _equation_frame(image, round_spec, local, spec, palette)
     elif spec.puzzle_type == "missing_number":
         _sequence_frame(image, round_spec, local, palette)
-    elif spec.puzzle_type == "flash_count":
-        draw_flash_round(image, round_spec, local, palette)
     else:
         draw_path_puzzle(image, round_spec, local, spec.difficulty, palette)
     transition_start = spec.round_duration - 0.4
@@ -261,6 +263,8 @@ def render_cover(spec: VideoSpec) -> Image.Image:
         image = render_frame(spec, PUZZLE_FIT_COVER_TIME, settings.internal_size)
     elif uses_exit_hard_look(spec):
         image = render_frame(spec, EXIT_HARD_COVER_TIME, settings.internal_size)
+    elif uses_line_look(spec):
+        image = render_frame(spec, LINE_COVER_TIME, settings.internal_size)
     elif spec.puzzle_type == "cube_count":
         image = render_frame(spec, CUBE_COVER_TIME, settings.internal_size)
     elif spec.puzzle_type == "memory_challenge":
@@ -269,7 +273,7 @@ def render_cover(spec: VideoSpec) -> Image.Image:
         image = render_frame(spec, LUCKY_COVER_TIME, settings.internal_size)
     elif spec.puzzle_type == "quick_math" and spec.rounds and "format" in spec.rounds[0].data:
         image = render_frame(spec, QUICK_MATH_COVER_TIME, settings.internal_size)
-    elif spec.puzzle_type in ("quick_math", "flash_count"):
+    elif spec.puzzle_type == "quick_math":
         image = render_frame(spec, min(1.25, spec.intro_duration - 1 / FPS), settings.internal_size)
     else:
         image = render_frame(spec, spec.intro_duration + 0.34, settings.internal_size)

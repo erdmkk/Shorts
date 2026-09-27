@@ -4,8 +4,9 @@ import numpy as np
 
 from puzzly.config import CUBE_ROUND_COLORS, CUBE_VISIBLE, round_duration
 from puzzly.metadata import youtube_metadata
-from puzzly.puzzles.cube_count import (COUNT_RANGES, GRID, MIN_BASE_VISIBLE, MIN_FOOTING_VISIBLE, MIN_SIDE_VISIBLE,
-                                       MIN_TOP_VISIBLE, generate, readable, spaced, visibility)
+from puzzly.puzzles.cube_count import (COUNT_RANGES, GRID_BIG, MIN_BASE_VISIBLE, MIN_FOOTING_VISIBLE, MIN_SIDE_VISIBLE,
+                                       MIN_TOP_VISIBLE, cubes_in, generate, readable, size_of, spaced, spaced_stacks,
+                                       visibility)
 from puzzly.registry import ACTIVE_PUZZLE_TYPES, MIXED_PUZZLE_TYPES
 from puzzly.validation import round_errors, validation_errors
 
@@ -24,10 +25,13 @@ def test_cube_specs_are_valid_readable_and_escalate() -> None:
             assert [item.data["tier"] for item in spec.rounds] == [0, 0, 1, 2]
             for item in spec.rounds:
                 data = item.data
-                assert data["grid"] == GRID[difficulty]
+                assert data["grid"] == GRID_BIG[difficulty]
                 assert data["visible_seconds"] == CUBE_VISIBLE[difficulty]
                 low, high = COUNT_RANGES[difficulty][data["tier"]]
-                heights = [stack["height"] for stack in data["stacks"]]
+                # Every level has one big block: a 2x2 box, one cube tall, that counts as ONE cube.
+                blocks = [stack for stack in data["stacks"] if size_of(stack) == 2]
+                assert len(blocks) == 1 and blocks[0]["height"] == 1
+                heights = [stack["height"] for stack in data["stacks"] if size_of(stack) == 1]
                 # Spread out: never 3 + 3 + 3; no height on more than half the stacks; 1 stack per 2.5 cubes.
                 assert len(set(heights)) >= 2 and max(heights.count(h) for h in heights) <= (len(heights) + 1) // 2
                 assert len(heights) * 2.5 >= sum(heights)
@@ -35,9 +39,9 @@ def test_cube_specs_are_valid_readable_and_escalate() -> None:
                     assert 4 in heights and max(heights) == 4  # final Hard level adds 4-cube towers
                 else:
                     assert max(heights) <= 3
-                assert low <= item.answer == sum(stack["height"] for stack in data["stacks"]) <= high
+                assert low <= item.answer == sum(heights) + 1 == sum(cubes_in(stack) for stack in data["stacks"]) <= high
                 # Solvable: every stack shows its top, its footing, and a side of every cube.
-                assert spaced([stack["cell"] for stack in data["stacks"]])
+                assert spaced_stacks(data["stacks"])
                 for top, footing, *sides in visibility(data["grid"], data["stacks"]):
                     assert top >= MIN_TOP_VISIBLE and min(sides[0]) >= MIN_BASE_VISIBLE
                     assert footing >= MIN_FOOTING_VISIBLE  # where the stack meets the floor is always visible
@@ -61,6 +65,28 @@ def test_stack_directly_behind_another_is_rejected() -> None:
     behind = [{"cell": [1, 1], "height": 3}, {"cell": [2, 2], "height": 3}, {"cell": [4, 0], "height": 3},
               {"cell": [0, 4], "height": 3}]
     assert round_errors(replace(item, data={**item.data, "stacks": behind, "total": 12}, answer=12))
+
+
+def test_big_block_counts_as_one_cube() -> None:
+    item = generate(12, "medium").rounds[1]
+    block = next(stack for stack in item.data["stacks"] if size_of(stack) == 2)
+    assert cubes_in(block) == 1
+    as_four = item.answer + 3  # counting the big block as four cubes is wrong
+    assert round_errors(replace(item, data={**item.data, "total": as_four}, answer=as_four), "medium")
+    taller = [dict(stack, height=2) if size_of(stack) == 2 else stack for stack in item.data["stacks"]]
+    assert round_errors(replace(item, data={**item.data, "stacks": taller}), "medium")  # a big block is one cube tall
+    # A big block may not touch a tower: it would read as part of it.
+    assert not spaced_stacks([{"cell": [0, 0], "height": 1, "size": 2}, {"cell": [2, 0], "height": 2}])
+    assert spaced_stacks([{"cell": [0, 0], "height": 1, "size": 2}, {"cell": [3, 0], "height": 2}])
+
+
+def test_older_rounds_without_big_blocks_still_validate() -> None:
+    from puzzly.puzzles.cube_count import errors
+    old = {"grid": 5, "tier": 0, "count_range": [8, 11], "visible_seconds": CUBE_VISIBLE["hard"], "color_id": "sky",
+           "stacks": [{"cell": [0, 0], "height": 3}, {"cell": [0, 2], "height": 2}, {"cell": [2, 4], "height": 1},
+                      {"cell": [4, 1], "height": 2}], "total": 8}
+    assert errors(old, 8, "hard") == []  # a 5x5 board with no big block and no version is still valid
+    assert errors({**old, "version": 2}, 8, "hard")  # new rounds must use the larger board and a big block
 
 
 def test_fully_hidden_stack_is_rejected() -> None:

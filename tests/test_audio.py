@@ -72,5 +72,10 @@ def test_music_is_opt_in_quick_math_only_and_ducks_under_effects() -> None:
         mixed = timeline_audio(item)
         assert float(np.abs(mixed).max()) <= MIX_PEAK_LIMIT + 1e-9 and not np.allclose(mixed, timeline_audio(replace(item, metadata={})))
     assert len({style["bpm"] for style in STYLES.values()}) >= 6
-    legacy = replace(generate_spec("flash_count", 3, "hard"), metadata={"music": "on"})
+    # Every game has its own melody and lead instrument; pick games sound fun (major), the rest tense (minor).
+    assert len({style["motif"] for style in STYLES.values()}) == len(STYLES)
+    assert len({style["lead"] for style in STYLES.values()}) == len(STYLES)
+    assert all((style["mood"] == "fun") == all(key.endswith("major") for key in style["keys"]) for style in STYLES.values())
+    assert {kind for kind, style in STYLES.items() if style["mood"] == "fun"} == {"lucky_pick", "bounce_arena"}
+    legacy = replace(generate_spec("missing_number", 3, "hard"), metadata={"music": "on"})
     assert not music_enabled(legacy)  # light-theme games stay music-free

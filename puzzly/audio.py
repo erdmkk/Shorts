@@ -7,8 +7,6 @@ import numpy as np
 
 from .config import (AUDIO_DIR, AUDIO_RATE, PATH_TYPES, MEMORY_ANSWER_HIGHLIGHT, MEMORY_QUESTION_DURATION,
                      MEMORY_TARGET_ENTRANCE, MEMORY_THINKING_DURATION, thinking_duration, ensure_directories)
-from .config import (FLASH_APPEARANCE_DURATION, FLASH_HIDE_DURATION, FLASH_REVEAL_DURATION,
-                     FLASH_THINKING_DURATION)
 from .config import LUCKY_APPEARANCE_DURATION, LUCKY_SELECTION_DURATION, LUCKY_WINNER_HOLD
 from .puzzles.lucky_pick import CHOMP_AT, EAT_ANTICIPATION, EAT_BITE
 from .models import VideoSpec
@@ -141,6 +139,12 @@ def timeline_audio(spec: VideoSpec) -> np.ndarray:
         place(0.28 + icon * 0.08, sounds["object_pop"], (icon % 3 - 1) * 0.4)
     for index in range(spec.round_count):
         start = spec.intro_duration + index * spec.round_duration
+        if spec.puzzle_type == "find_the_exit" and spec.rounds[index].data.get("layout") == "deceptive_v2":
+            from .visuals.find_the_exit import schedule as exit_schedule
+            start = exit_schedule(spec)[index][0]
+        elif spec.puzzle_type == "line_follow" and spec.rounds[index].data.get("version") == "weave_v7":
+            from .visuals.line_follow import schedule as line_schedule
+            start = line_schedule(spec)[index][0]
         place(start + 0.08, sounds["object_pop"])
         if spec.puzzle_type == "memory_challenge":
             from .visuals.memory import grid_phases
@@ -162,14 +166,36 @@ def timeline_audio(spec: VideoSpec) -> np.ndarray:
             place(start + times["completed"], sounds["sparkle"])
             continue
         if spec.puzzle_type == "flash_count":
-            visible_end = FLASH_APPEARANCE_DURATION + float(spec.rounds[index].data["visible_seconds"])
-            hidden_at = visible_end + FLASH_HIDE_DURATION
-            reveal_at = hidden_at + FLASH_THINKING_DURATION + FLASH_REVEAL_DURATION
-            place(start + visible_end, sounds["transition_whoosh"])
-            place(start + hidden_at + FLASH_THINKING_DURATION * .55, sounds["pulse"])
-            place(start + hidden_at + FLASH_THINKING_DURATION - .32, sounds["pulse"])
-            place(start + reveal_at, sounds["answer_ding"])
-            place(start + spec.round_duration - .38, sounds["transition_whoosh"])
+            from .visuals.flash_count import phases as flash_phases
+            data = spec.rounds[index].data
+            times = flash_phases(data)
+            place(start + times["flash_start"], sounds["puzzle_snap"])  # the flash: a crisp shutter click
+            place(start + times["flash_end"], sounds["transition_whoosh"])  # the number is gone
+            for remaining in (3.0, 2.0, 1.0):  # clock ticks over the final seconds
+                place(start + times["think_end"] - remaining, sounds["pulse"])
+            digits = len(data["number"])
+            for position in range(digits):
+                place(start + times["think_end"] + position * (times["reveal_end"] - times["think_end"]) / digits,
+                      sounds["object_pop"], (position / max(1, digits - 1) - .5) * .6)
+            place(start + times["reveal_end"], sounds["answer_ding"])
+            place(start + times["reveal_end"] + .12, sounds["sparkle"])
+            place(start + spec.round_duration - 0.15, sounds["transition_whoosh"])
+            continue
+        if spec.puzzle_type == "lucky_pick" and spec.rounds[index].data.get("map_version") == "snake_chase_v1":
+            selection_end = LUCKY_APPEARANCE_DURATION + LUCKY_SELECTION_DURATION
+            for remaining in (3.0, 2.0, 1.0):  # clock ticks at the end of the pick window
+                place(start + selection_end - remaining, sounds["pulse"])
+            place(start + selection_end, sounds["transition_whoosh"])  # the snake leaves its den
+            data = spec.rounds[index].data
+            catches = data["catches"]
+            for number, event in enumerate(catches):
+                at = start + selection_end + float(event["time"])
+                if number >= len(catches) - 2:  # a warning pulse before each of the last catches
+                    place(at - .35, sounds["pulse"])
+                place(at, sounds["puzzle_snap"], (float(event["position"][0]) - 540) / 540 * .4)
+                place(at + .12, sounds["object_pop"])
+            winner = start + selection_end + float(data["simulation_duration"])
+            place(winner, sounds["answer_ding"]); place(winner + .18, sounds["sparkle"])
             continue
         if spec.puzzle_type == "lucky_pick":
             selection_end = LUCKY_APPEARANCE_DURATION + LUCKY_SELECTION_DURATION
@@ -231,15 +257,29 @@ def timeline_audio(spec: VideoSpec) -> np.ndarray:
             place(start + times["count_end"] + .12, sounds["sparkle"])
             place(start + spec.round_duration - 0.15, sounds["transition_whoosh"])
             continue
+        if spec.puzzle_type == "line_follow" and spec.rounds[index].data.get("version") == "weave_v7":
+            from .visuals.line_follow import phases as line_phases, schedule as line_schedule
+            start, level_duration = line_schedule(spec)[index]  # levels last different times
+            times = line_phases(spec.rounds[index])
+            for remaining in (3.0, 2.0, 1.0):  # clock ticks over the final seconds
+                place(start + times["think_end"] - remaining, sounds["pulse"])
+            place(start + times["think_end"], sounds["transition_whoosh"])  # the trace sets off
+            place(start + times["arrival"], sounds["answer_ding"])
+            place(start + times["arrival"] + .12, sounds["sparkle"])
+            place(start + level_duration - 0.15, sounds["transition_whoosh"])
+            continue
         if spec.puzzle_type == "find_the_exit" and spec.rounds[index].data.get("layout") == "deceptive_v2":
-            from .config import EXIT_HARD_TRACE
-            think_end = 0.35 + thinking_duration(spec.puzzle_type, spec.difficulty)
+            from .config import EXIT_HARD_ENTRANCE, EXIT_HARD_TRACE
+            from .puzzles.find_the_exit import round_thinking
+            from .visuals.find_the_exit import schedule as exit_schedule
+            start, level_duration = exit_schedule(spec)[index]  # levels last different times
+            think_end = EXIT_HARD_ENTRANCE + round_thinking(spec.rounds[index].data)
             for remaining in (3.0, 2.0, 1.0):  # clock ticks over the final seconds
                 place(start + think_end - remaining, sounds["pulse"])
             place(start + think_end, sounds["transition_whoosh"])
             place(start + think_end + EXIT_HARD_TRACE, sounds["answer_ding"])
             place(start + think_end + EXIT_HARD_TRACE + .12, sounds["sparkle"])
-            place(start + spec.round_duration - 0.15, sounds["transition_whoosh"])
+            place(start + level_duration - 0.15, sounds["transition_whoosh"])
             continue
         if spec.puzzle_type in PATH_TYPES:
             think_start = 0.35

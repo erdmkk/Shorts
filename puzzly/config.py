@@ -44,7 +44,7 @@ OUTRO_DURATION = 0.9
 THINKING_DURATION = 4.0
 ROUND_DURATIONS = {"quick_math": 5.7, "missing_number": 5.8, "puzzle_fit": 6.2}
 DEFAULT_ROUNDS = {"quick_math": 3, "missing_number": 5, "puzzle_fit": 5}
-DEFAULT_ROUNDS.update({"find_the_exit": 4, "line_follow": 4})
+DEFAULT_ROUNDS.update({"find_the_exit": 4, "line_follow": 5})  # Line Follow: level 1 to 5, each one harder
 DEFAULT_ROUNDS["memory_challenge"] = 1
 DEFAULT_ROUNDS["flash_count"] = 4
 DEFAULT_ROUNDS["lucky_pick"] = 1
@@ -68,10 +68,38 @@ PUZZLE_FIT_OUTRO_DURATION = 1.6
 PUZZLE_FIT_ENTRANCE = 0.35
 PUZZLE_FIT_ELIMINATION = 0.55
 PUZZLE_FIT_MOVE = 0.45
+PUZZLE_FIT_THINKING = 5.0  # seconds to find the fitting piece, every difficulty
+PUZZLE_FIT_ROUND_EXTRA = 2.2  # entrance, elimination, fly-in, snap, and solved hold
 # Find the Exit Hard (Puzzly for You look): larger deceptive mazes, glowing route trace, shared hook/outro timing.
-EXIT_HARD_THINKING = 8.0
+# Line Follow (Puzzly for You look): level 1..5 thinking times; entrance, glowing trace, and solved hold.
+LINE_THINKING = (7.0, 9.0, 11.0, 13.0, 15.0)
+LINE_ENTRANCE, LINE_TRACE, LINE_HOLD = 0.35, 2.4, 0.9
+
+
+def line_round(thinking: float) -> float:
+    return round(LINE_ENTRANCE + thinking + LINE_TRACE + LINE_HOLD, 3)
+
+
+def line_average_round(count: int) -> float:
+    tiers = [0, 2, 4] if count <= 3 else [min(index, 4) for index in range(count)]
+    return round(sum(line_round(LINE_THINKING[tier]) for tier in tiers) / max(1, count), 4)
+
+
+EXIT_HARD_THINKING = 8.0  # older videos (no per-level time stored) think this long on every level
+EXIT_HARD_LEVEL_THINKING = (5.0, 6.0, 7.0, 8.0, 9.0)  # level 1..5: bigger mazes get more time
+EXIT_HARD_ENTRANCE = 0.35
 EXIT_HARD_TRACE = 1.6
 EXIT_HARD_HOLD = 0.9
+
+
+def exit_hard_round(thinking: float) -> float:
+    return round(EXIT_HARD_ENTRANCE + thinking + EXIT_HARD_TRACE + EXIT_HARD_HOLD, 3)
+
+
+def exit_hard_average_round(count: int) -> float:
+    """Levels last different times; VideoSpec keeps their average so the total duration stays exact."""
+    thinking = [EXIT_HARD_LEVEL_THINKING[min(index, len(EXIT_HARD_LEVEL_THINKING) - 1)] for index in range(count)]
+    return round(sum(exit_hard_round(value) for value in thinking) / max(1, count), 4)
 # Cube Count (Puzzly for You look): cubes drop in, flash, vanish, then are counted stack by stack.
 CUBE_BUILD = 0.6
 CUBE_VISIBLE = {"easy": 2.5, "medium": 2.0, "hard": 0.3}
@@ -112,13 +140,16 @@ def memory_round_duration(difficulty: str | None) -> float:
     memorize = MEMORY_MEMORIZE.get(difficulty or "easy", MEMORY_MEMORIZE["easy"])
     return round(MEMORY_BOARD_ENTRANCE + memorize + MEMORY_GRID_COVER + MEMORY_GRID_QUESTIONS * MEMORY_QUESTION_DURATION
                  + MEMORY_FINAL_DELAY + MEMORY_FINAL_FLIP + MEMORY_COMPLETED_HOLD, 3)
-FLASH_INTRO_DURATION = 1.5
-FLASH_APPEARANCE_DURATION = 0.2
-FLASH_VISIBLE_DURATIONS = {"easy": 1.20, "medium": 0.90, "hard": 0.65}
-FLASH_HIDE_DURATION = 0.25
-FLASH_THINKING_DURATION = 3.0
-FLASH_REVEAL_DURATION = 0.25
-FLASH_SOLVED_HOLD = 1.0
+# Flash Count, number flash (Puzzly for You look): a 2 s ARE YOU READY? screen opens the video; each level is get
+# ready, the number flashes, think, then the digits drop into their slots one by one. Every phase is a whole number of
+# 30 fps frames. Produced only in Hard.
+FLASH_INTRO = 2.0
+FLASH_READY = 0.9
+FLASH_VISIBLE = {4: 0.2, 5: 0.2, 6: 0.3}  # seconds the number is on screen, by its digit count
+FLASH_THINKING = 3.0
+FLASH_REVEAL = 1.0
+FLASH_HOLD = 0.9
+FLASH_DIGITS = (4, 5, 6)  # digits on the opening, middle, and final level tier
 LUCKY_INTRO_DURATION = 1.25
 LUCKY_APPEARANCE_DURATION = 0.25
 LUCKY_SELECTION_DURATION = 5.0
@@ -139,10 +170,9 @@ BOUNCE_WINNER_HOLD = 1.5
 BOUNCE_CTA_DURATION = 1.7
 
 
-def flash_round_duration(difficulty: str) -> float:
-    visible = FLASH_VISIBLE_DURATIONS.get(difficulty, FLASH_VISIBLE_DURATIONS["easy"])
-    return (FLASH_APPEARANCE_DURATION + visible + FLASH_HIDE_DURATION + FLASH_THINKING_DURATION
-            + FLASH_REVEAL_DURATION + FLASH_SOLVED_HOLD)
+def flash_round_duration(difficulty: str | None) -> float:
+    """Every level lasts the same; a shorter flash leaves a slightly longer solved hold."""
+    return round(FLASH_READY + max(FLASH_VISIBLE.values()) + FLASH_THINKING + FLASH_REVEAL + FLASH_HOLD, 3)
 
 
 def quick_math_thinking(difficulty: str | None, tier: int) -> float:
@@ -169,17 +199,19 @@ def thinking_duration(puzzle_type: str, difficulty: str | None) -> float:
     if puzzle_type == "lucky_pick":
         return LUCKY_SELECTION_DURATION
     if puzzle_type == "flash_count":
-        return FLASH_THINKING_DURATION
+        return FLASH_THINKING
     if puzzle_type == "memory_challenge":
         return MEMORY_THINKING_DURATION
-    if puzzle_type == "puzzle_fit" and difficulty == "hard":
-        return THINKING_DURATION + 2.0
+    if puzzle_type == "puzzle_fit":
+        return PUZZLE_FIT_THINKING
     if puzzle_type == "find_the_exit" and difficulty == "hard":
         return EXIT_HARD_THINKING
     if puzzle_type == "cube_count":
         return CUBE_THINKING
     if puzzle_type == "quick_math":  # level 1; later levels get longer (quick_math_thinking)
         return quick_math_thinking(difficulty, 0)
+    if puzzle_type == "line_follow":  # level 1; later levels get longer (LINE_THINKING)
+        return LINE_THINKING[0]
     return {"easy": 5.0, "medium": 6.0, "hard": 7.0}[difficulty] if puzzle_type in PATH_TYPES else THINKING_DURATION
 
 
@@ -192,17 +224,19 @@ def round_duration(puzzle_type: str, difficulty: str | None) -> float:
         return flash_round_duration(difficulty)
     if puzzle_type == "memory_challenge":
         return memory_round_duration(difficulty)
-    if puzzle_type == "find_the_exit" and difficulty == "hard":
-        return 0.35 + EXIT_HARD_THINKING + EXIT_HARD_TRACE + EXIT_HARD_HOLD
+    if puzzle_type == "find_the_exit" and difficulty == "hard":  # the average level of a default-length video
+        return exit_hard_average_round(DEFAULT_ROUNDS["find_the_exit"])
     if puzzle_type == "cube_count":
         return round(CUBE_BUILD + CUBE_VISIBLE.get(difficulty or "easy", CUBE_VISIBLE["easy"]) + CUBE_HIDE + CUBE_THINKING
                      + CUBE_RETURN + CUBE_COUNT_UP + CUBE_HOLD, 3)
+    if puzzle_type == "line_follow":  # the average level of a default-length video
+        return line_average_round(DEFAULT_ROUNDS["line_follow"])
     if puzzle_type in PATH_TYPES:
         return thinking_duration(puzzle_type, difficulty) + 2.3
     if puzzle_type == "quick_math":  # the average level of a default-length video
         return quick_math_average_round(difficulty, quick_math_tiers(DEFAULT_ROUNDS["quick_math"]))
-    if puzzle_type == "puzzle_fit" and difficulty == "hard":
-        return ROUND_DURATIONS[puzzle_type] + 2.0
+    if puzzle_type == "puzzle_fit":
+        return round(PUZZLE_FIT_THINKING + PUZZLE_FIT_ROUND_EXTRA, 3)
     return ROUND_DURATIONS[puzzle_type]
 
 PALETTES = (
@@ -271,10 +305,12 @@ def palette_for(difficulty: str, variant: int = 0) -> dict[str, str]:
 
 def intro_outro(puzzle_type: str, difficulty: str | None) -> tuple[float, float]:
     """Intro/outro for round-based games; the Puzzly for You look uses the hook intro and score-question outro."""
-    if puzzle_type in ("puzzle_fit", "cube_count", "memory_challenge", "lucky_pick", "quick_math") or (
+    if puzzle_type == "flash_count":
+        return FLASH_INTRO, PUZZLE_FIT_OUTRO_DURATION
+    if puzzle_type in ("puzzle_fit", "cube_count", "memory_challenge", "lucky_pick", "quick_math", "line_follow") or (
             puzzle_type == "find_the_exit" and difficulty == "hard"):
         return PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION
-    return (FLASH_INTRO_DURATION if puzzle_type == "flash_count" else INTRO_DURATION), OUTRO_DURATION
+    return INTRO_DURATION, OUTRO_DURATION
 
 
 def ensure_directories() -> None:

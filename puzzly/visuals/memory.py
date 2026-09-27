@@ -95,8 +95,14 @@ def _rgb(value: str) -> tuple[int, int, int]:
     raw = value.lstrip("#"); return tuple(int(raw[i:i+2], 16) for i in (0, 2, 4))
 
 
-@lru_cache(maxsize=128)
 def token_image(shape: str, color_value: str, size: int) -> Image.Image:
+    """A shape token in the active object palette (see puzzly.palette)."""
+    from ..palette import object_color
+    return _token_image(shape, object_color(color_value), size)
+
+
+@lru_cache(maxsize=128)
+def _token_image(shape: str, color_value: str, size: int) -> Image.Image:
     high_size = size * 2; mask = shape_mask(shape, high_size)
     base = _rgb(color_value)
     top = tuple(min(255, round(channel * .82 + 255 * .18)) for channel in base)

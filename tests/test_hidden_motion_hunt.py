@@ -39,7 +39,7 @@ def _envelope(item: dict) -> float:
 def test_registry_standalone_status_and_ui_controls() -> None:
     assert "hidden_motion_hunt" in ACTIVE_PUZZLE_TYPES
     assert "hidden_motion_hunt" not in MIXED_PUZZLE_TYPES
-    assert "line_follow" in EXPERIMENTAL_PUZZLE_TYPES and "line_follow" not in ACTIVE_PUZZLE_TYPES
+    assert "line_follow" in ACTIVE_PUZZLE_TYPES and "line_follow" not in EXPERIMENTAL_PUZZLE_TYPES
     assert "hidden_motion_hunt" not in set(mixed_types(700, random.Random(17)))
     app = AppTest.from_file("app.py").run()
     app.selectbox[0].select("Hidden Motion Hunt").run()

@@ -22,10 +22,13 @@ OUTRO_QUESTION = "Did yours survive?"
 OUTRO_PROMPT = "Comment your pick ↓"
 CHARACTER_RADIUS = 64  # logical px; the body is 128 px wide inside 118 px corridors
 RIM = 7  # neon wall rim thickness
-BODY_TOP, BODY_BOTTOM = "#43369E", "#1D1754"
-BODY_RIM = "#2EE6C5"
-FACE_LINE = "#D8FFF8"
-MOUTH_INSIDE, THROAT, TONGUE = "#15041F", "#FF3D7F", "#FF7AB8"
+# The creature ("the devourer"): an armoured gunmetal orb with a dorsal ridge, one glowing visor eye, and a jagged jaw.
+# Built for adults: no cartoon eyes, cheeks, tongue, or smiles.
+METAL_DARK, METAL_LIT, METAL_EDGE = "#0E111C", "#4B5372", "#05060B"
+EYE, EYE_CORE = "#FF3B4E", "#FFD9DD"
+MAW_DEEP, MAW_GLOW = "#16030A", "#C21F35"
+BONE = "#E9E4D8"
+BODY_RIM = EYE  # aura, rim, and the trail behind it
 TRAIL_SECONDS = 0.42
 BURST_SECONDS = 0.5
 COVER_TIME = 0.6
@@ -114,7 +117,19 @@ def _glow_sprite(radius: int, color: str, alpha: int) -> Image.Image:
     return sprite
 
 
-def _pockets(image: Image.Image, item: RoundSpec, eaten: set[int], local: float, scale: float) -> None:
+RING_FADE = 0.3  # the selection rings fade out this fast once the pick window closes
+
+
+def ring_opacity(phase: str, local: float) -> float:
+    """Pocket rings only mark the choices while the viewer picks, then fade away."""
+    if phase in ("idle", "selection"):
+        return 1.0
+    return round(1 - _clamp((local - LUCKY_APPEARANCE_DURATION - LUCKY_SELECTION_DURATION) / RING_FADE), 6)
+
+
+def _pockets(image: Image.Image, item: RoundSpec, eaten: set[int], local: float, scale: float, opacity: float = 1.0) -> None:
+    if opacity <= 0:
+        return
     draw = ImageDraw.Draw(image, "RGBA")
     occupied = {tuple(target["position"]): target for target in item.data["targets"]}
     ring = 58 * scale
@@ -123,10 +138,10 @@ def _pockets(image: Image.Image, item: RoundSpec, eaten: set[int], local: float,
         x, y = point[0] * scale, point[1] * scale
         target = occupied.get(tuple(point))
         if target is None or target["index"] in eaten:
-            draw.ellipse((x - ring, y - ring, x + ring, y + ring), outline=_rgb(PALETTE["surface_edge"]) + (150,), width=width)
+            draw.ellipse((x - ring, y - ring, x + ring, y + ring), outline=_rgb(PALETTE["surface_edge"]) + (round(150 * opacity),), width=width)
             continue
         pulse = .5 + .5 * math.sin(local * 3.2 + target["index"])
-        draw.ellipse((x - ring, y - ring, x + ring, y + ring), outline=_rgb(target["color_value"]) + (round(120 + 70 * pulse),), width=width)
+        draw.ellipse((x - ring, y - ring, x + ring, y + ring), outline=_rgb(target["color_value"]) + (round((120 + 70 * pulse) * opacity),), width=width)
 
 
 def _portal(image: Image.Image, entrance: list[int], local: float, scale: float, flash: float) -> None:
@@ -160,89 +175,132 @@ def _bob(index: int, local: float) -> float:
 
 # ---------------------------------------------------------------- creature
 
+def _layer(size: int, color: str, mask: Image.Image, strength: float = 1.0) -> Image.Image:
+    layer = Image.new("RGBA", (size, size), _rgb(color) + (0,))
+    layer.putalpha(mask if strength >= 1 else mask.point(lambda value: round(value * strength)))
+    return layer
+
+
 def creature(radius: float, *, stretch: tuple[float, float] = (1.0, 1.0), tilt: float = 0.0, mouth: float = 0.0,
              look: tuple[float, float] = (0.0, 0.0), blink: float = 0.0, brow: float = 0.0, happy: float = 0.0,
              cheeks: float = 0.0) -> Image.Image:
-    """The lit indigo creature. Parameters drive squash/stretch, jaw, eyes, brows, and cheeks."""
+    """The devourer: an armoured gunmetal orb with a dorsal ridge, one glowing visor eye, and a jagged jaw.
+
+    mouth opens the jaw; look moves the slit pupil; blink flickers the visor; brow narrows it into a glare; happy is
+    the satisfied squint after a bite; cheeks is the red glow leaking from its seams while it digests.
+    """
     ss = 2
     R = radius * ss
     side = round(R * 3.2)
     c = side / 2
     image = Image.new("RGBA", (side, side), (0, 0, 0, 0))
     sx, sy = stretch
-    sx += .10 * cheeks
     rx, ry = R * sx, R * sy
-    # Halo.
-    halo = Image.new("L", (side, side), 0)
-    ImageDraw.Draw(halo).ellipse((c - rx * 1.12, c - ry * 1.12, c + rx * 1.12, c + ry * 1.12), fill=120)
-    halo_layer = Image.new("RGBA", (side, side), _rgb(BODY_RIM) + (0,))
-    halo_layer.putalpha(halo.filter(ImageFilter.GaussianBlur(R * .22)))
-    image.alpha_composite(halo_layer)
-    # Body with a vertical gradient.
+    threat = max(brow, mouth, cheeks)
+    # A low red aura that swells when it is about to strike.
+    aura = Image.new("L", (side, side), 0)
+    ImageDraw.Draw(aura).ellipse((c - rx * 1.16, c - ry * 1.16, c + rx * 1.16, c + ry * 1.16), fill=255)
+    image.alpha_composite(_layer(side, EYE, aura.filter(ImageFilter.GaussianBlur(R * .24)), .22 + .30 * threat))
+    draw = ImageDraw.Draw(image, "RGBA")
+    # Dorsal ridge: four angled spikes behind the body.
+    for angle, length in ((-42, 1.26), (-15, 1.42), (15, 1.42), (42, 1.26)):
+        spike = []
+        for offset, reach in ((-13, .86), (0, length), (13, .86)):
+            a = math.radians(angle + offset)
+            spike.append((c + math.sin(a) * rx * reach, c - math.cos(a) * ry * reach))
+        draw.polygon(spike, fill=_rgb("#2A3048") + (255,))
+        draw.line((spike[0], spike[1]), fill=_rgb("#5A6385") + (255,), width=max(1, round(R * .018)))  # lit left face
+        draw.line((spike[1], spike[2]), fill=_rgb(EYE) + (170,), width=max(1, round(R * .018)))  # red-lit right face
+    # Body: a lit metal sphere (key light from the upper left, dark falloff, a red fresnel edge, one crisp highlight).
+    y, x = np.mgrid[0:side, 0:side].astype(np.float32)
+    nx, ny = (x - c) / rx, (y - c) / ry
+    d = np.hypot(nx, ny)
+    z = np.sqrt(np.clip(1 - d * d, 0, 1))
+    light = np.clip(1 - np.hypot(nx + .38, ny + .48) / 1.35, 0, 1)
+    color = (np.array(_rgb(METAL_DARK), np.float32) * (1 - light[..., None]) + np.array(_rgb(METAL_LIT), np.float32) * light[..., None])
+    color *= (.45 + .55 * z)[..., None]
+    fresnel = np.clip((d - .80) / .20, 0, 1) * (d <= 1)
+    color += np.array(_rgb(EYE), np.float32) * (fresnel * (.30 + .25 * threat))[..., None]
+    color += 255 * (np.clip(1 - np.hypot(nx + .42, ny + .56) / .16, 0, 1) ** 2 * .55)[..., None]
+    body = Image.fromarray(np.clip(color, 0, 255).astype(np.uint8)).convert("RGBA")
     body_mask = Image.new("L", (side, side), 0)
     ImageDraw.Draw(body_mask).ellipse((c - rx, c - ry, c + rx, c + ry), fill=255)
-    gradient = np.linspace(0, 1, side, dtype=np.float32)[:, None, None]
-    colors = np.array(_rgb(BODY_TOP), np.float32) * (1 - gradient) + np.array(_rgb(BODY_BOTTOM), np.float32) * gradient
-    body = Image.fromarray(np.repeat(colors, side, axis=1).astype(np.uint8)).convert("RGBA")
     body.putalpha(body_mask)
     image.alpha_composite(body)
+    # Armour seam: a helmet line over the eye, with a thin lit edge, kept inside the body.
+    seam = max(2, round(R * .03))
+    arc_box = (c - rx * 1.05, c - ry * .98, c + rx * 1.05, c + ry * .52)
+    armour = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    armour_draw = ImageDraw.Draw(armour)
+    armour_draw.arc(arc_box, 190, 350, fill=_rgb(METAL_EDGE) + (255,), width=seam)
+    armour_draw.arc((arc_box[0], arc_box[1] + seam, arc_box[2], arc_box[3] + seam), 195, 345, fill=_rgb("#6A7396") + (90,), width=max(1, seam // 2))
+    armour.putalpha(Image.fromarray(np.minimum(np.asarray(armour.getchannel("A")), np.asarray(body_mask))))
+    image.alpha_composite(armour)
     draw = ImageDraw.Draw(image, "RGBA")
-    # Gloss and rim light.
-    gloss = Image.new("L", (side, side), 0)
-    ImageDraw.Draw(gloss).ellipse((c - rx * .62, c - ry * .86, c - rx * .05, c - ry * .48), fill=70)
-    gloss_layer = Image.new("RGBA", (side, side), (255, 255, 255, 0))
-    gloss_layer.putalpha(gloss.filter(ImageFilter.GaussianBlur(R * .08)))
-    image.alpha_composite(gloss_layer)
-    draw.ellipse((c - rx, c - ry, c + rx, c + ry), outline=_rgb(BODY_RIM) + (255,), width=max(2, round(R * .075)))
-    if cheeks > 0:
-        for side_sign in (-1, 1):
-            cx, cy = c + side_sign * rx * .62, c + ry * .22
-            r = R * .17
-            draw.ellipse((cx - r, cy - r * .7, cx + r, cy + r * .7), fill=_rgb(TONGUE) + (round(200 * cheeks),))
-    line = max(2, round(R * .065))
-    # Eyes.
-    eye_y = c - ry * .22 - R * .10 * mouth
-    for side_sign in (-1, 1):
-        ex = c + side_sign * rx * .36
-        if happy > .5:
-            draw.arc((ex - R * .16, eye_y - R * .10, ex + R * .16, eye_y + R * .18), 200, 340, fill=_rgb(FACE_LINE) + (255,), width=line)
-            continue
-        w, h = R * .17, R * .21 * max(.08, 1 - blink)
-        draw.ellipse((ex - w, eye_y - h, ex + w, eye_y + h), fill=(255, 255, 255, 255))
-        if h > R * .05:
-            px, py = ex + look[0] * R * .07, eye_y + look[1] * R * .08
-            pr = R * .095
-            draw.ellipse((px - pr, py - pr, px + pr, py + pr), fill=_rgb("#0B0F24") + (255,))
-            hr = R * .035
-            draw.ellipse((px - pr * .35 - hr, py - pr * .4 - hr, px - pr * .35 + hr, py - pr * .4 + hr), fill=(255, 255, 255, 255))
-        if brow > 0:
-            inner, outer = ex - side_sign * R * .06, ex + side_sign * R * .22
-            draw.line(((outer, eye_y - R * .30), (inner, eye_y - R * .30 + R * .12 * brow)), fill=_rgb(FACE_LINE) + (round(255 * brow),), width=line)
-    # Mouth.
-    my = c + ry * .34 + R * .06 * mouth
+    draw.ellipse((c - rx, c - ry, c + rx, c + ry), outline=_rgb(EYE) + (round(120 + 100 * threat),), width=max(2, round(R * .035)))
+    # Visor eye: a recessed housing, then a glowing lens that narrows into a glare.
+    ey = c - ry * .12 - R * .08 * mouth
+    w = rx * .56
+    h = R * .17 * max(.12, 1 - blink) * (1 - .35 * brow) * (1 - .75 * happy)
+    draw.ellipse((c - w * 1.14, ey - R * .21, c + w * 1.14, ey + R * .21), fill=_rgb(METAL_EDGE) + (255,))
+    lens = Image.new("L", (side, side), 0)
+    lens_draw = ImageDraw.Draw(lens)
+    lens_draw.ellipse((c - w, ey - h, c + w, ey + h), fill=255)
+    if brow > 0:  # the upper lid drops toward the centre: a V-shaped glare
+        lens_draw.polygon(((c - w * 1.2, ey - h * 2.2), (c - w * 1.2, ey - h * .95), (c, ey - h + h * 1.05 * brow),
+                           (c + w * 1.2, ey - h * .95), (c + w * 1.2, ey - h * 2.2)), fill=0)
+    image.alpha_composite(_layer(side, EYE, lens.filter(ImageFilter.GaussianBlur(R * .12)), .85))
+    image.alpha_composite(_layer(side, EYE, lens))
+    core = Image.new("L", (side, side), 0)
+    ImageDraw.Draw(core).ellipse((c - w * .55, ey - h * .45, c + w * .55, ey + h * .45), fill=230)
+    core = Image.fromarray(np.minimum(np.asarray(core.filter(ImageFilter.GaussianBlur(R * .05))), np.asarray(lens)))
+    image.alpha_composite(_layer(side, EYE_CORE, core))
+    if h > R * .04:  # a vertical slit pupil that tracks where it is heading
+        pupil = Image.new("L", (side, side), 0)
+        px, py = c + look[0] * w * .45, ey + look[1] * h * .25
+        ImageDraw.Draw(pupil).ellipse((px - R * .04, py - h * .9, px + R * .04, py + h * .9), fill=255)
+        image.alpha_composite(_layer(side, "#12030A", Image.fromarray(np.minimum(np.asarray(pupil), np.asarray(lens)))))
+    draw = ImageDraw.Draw(image, "RGBA")
+    # Jaw: a jagged seam when closed; a glowing maw lined with teeth when open.
+    my = c + ry * .42 + R * .04 * mouth
+    mw = rx * (.50 + .18 * mouth)
     if mouth < .06:
-        width = R * (.24 if happy < .5 else .30)
-        draw.arc((c - width, my - R * .22, c + width, my + R * .08), 25, 155, fill=_rgb(FACE_LINE) + (255,), width=line)
+        points = [(c - mw + index * 2 * mw / 10, my + (R * .035 if index % 2 else -R * .035)) for index in range(11)]
+        if cheeks > 0:  # digesting: red light leaks through the seam
+            leak = Image.new("L", (side, side), 0)
+            ImageDraw.Draw(leak).line(points, fill=255, width=round(R * .08), joint="curve")
+            image.alpha_composite(_layer(side, EYE, leak.filter(ImageFilter.GaussianBlur(R * .07)), cheeks))
+            draw = ImageDraw.Draw(image, "RGBA")
+        draw.line(points, fill=_rgb(METAL_EDGE) + (255,), width=seam, joint="curve")
     else:
-        mw, mh = R * (.22 + .30 * mouth), R * (.06 + .38 * mouth)
-        box = (c - mw, my - mh, c + mw, my + mh)
-        draw.ellipse(box, fill=_rgb(MOUTH_INSIDE) + (255,))
-        throat = Image.new("L", (side, side), 0)
-        ImageDraw.Draw(throat).ellipse((c - mw * .6, my, c + mw * .6, my + mh * .9), fill=round(200 * mouth))
-        mouth_mask = Image.new("L", (side, side), 0)
-        ImageDraw.Draw(mouth_mask).ellipse(box, fill=255)
-        glow_alpha = Image.fromarray(np.minimum(np.asarray(throat.filter(ImageFilter.GaussianBlur(R * .08))), np.asarray(mouth_mask)))
-        throat_layer = Image.new("RGBA", (side, side), _rgb(THROAT) + (0,))
-        throat_layer.putalpha(glow_alpha)
-        image.alpha_composite(throat_layer)
+        mh = R * (.04 + .40 * mouth)
+        box = (c - mw, my - mh, c + mw, my + mh * 1.05)
+        maw = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(maw).ellipse(box, fill=255)
+        image.alpha_composite(_layer(side, MAW_DEEP, maw))
+        heat = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(heat).ellipse((c - mw * .7, my - mh * .1, c + mw * .7, my + mh * 1.1), fill=round(230 * mouth))
+        heat = Image.fromarray(np.minimum(np.asarray(heat.filter(ImageFilter.GaussianBlur(R * .10))), np.asarray(maw)))
+        image.alpha_composite(_layer(side, MAW_GLOW, heat))
+        teeth = Image.new("L", (side, side), 0)
+        teeth_draw = ImageDraw.Draw(teeth)
+        tooth_height = R * .11 * min(1.0, mouth * 1.6)
+        for count, top_row in ((7, True), (6, False)):
+            width = 2 * mw * .92 / count
+            for index in range(count):
+                x0 = c - mw * .92 + index * width
+                mid = x0 + width / 2
+                edge = mh * math.sqrt(max(0.0, 1 - ((mid - c) / mw) ** 2))
+                if top_row:
+                    base = my - edge - R * .01
+                    teeth_draw.polygon(((x0, base), (x0 + width, base), (mid, base + tooth_height)), fill=255)
+                else:
+                    base = my + edge * 1.05 + R * .01
+                    teeth_draw.polygon(((x0, base), (x0 + width, base), (mid, base - tooth_height * .85)), fill=255)
+        teeth = Image.fromarray(np.minimum(np.asarray(teeth), np.asarray(maw.filter(ImageFilter.MaxFilter(3)))))
+        image.alpha_composite(_layer(side, BONE, teeth))
         draw = ImageDraw.Draw(image, "RGBA")
-        draw.ellipse((c - mw * .5, my + mh * .30, c + mw * .5, my + mh * .95), fill=_rgb(TONGUE) + (255,))
-        if mouth > .25:
-            tooth = R * .09 * min(1, mouth * 1.5)
-            for tx in (c - mw * .42, c + mw * .42 - tooth * 1.1):
-                top = my - mh + R * .03
-                draw.polygon(((tx, top), (tx + tooth * 1.1, top), (tx + tooth * .55, top + tooth * 1.2)), fill=(255, 255, 255, 255))
-        draw.ellipse(box, outline=_rgb(FACE_LINE) + (255,), width=max(2, round(R * .045)))
+        draw.ellipse(box, outline=_rgb(METAL_EDGE) + (255,), width=seam)
     if tilt:
         image = image.rotate(tilt, resample=Image.Resampling.BICUBIC)
     return image.resize((side // ss, side // ss), Image.Resampling.LANCZOS)
@@ -388,7 +446,7 @@ def _header(image: Image.Image, text: str, color: str, scale: float, opacity: fl
 def _draw_scene(image: Image.Image, item: RoundSpec, local: float, scale: float, state: dict, intro_pop: float = 1.0) -> None:
     data = item.data
     eaten = set(state["eliminated"])
-    _pockets(image, item, eaten, local, scale)
+    _pockets(image, item, eaten, local, scale, ring_opacity(state["phase"], local))
     emerge_flash = 0.0
     if state["phase"] == "travel" and state.get("emerge", 1) < 1:
         emerge_flash = 1 - state["emerge"]
@@ -454,13 +512,13 @@ def _creature_for_state(image: Image.Image, state: dict, local: float, scale: fl
     sx = sy = 1.0
     tilt = 0.0
     zoom = 1.0
-    blink = 1.0 if (local % 2.7) < .09 else 0.0
+    blink = .7 if (local % 3.4) < .06 else 0.0  # a brief visor flicker, not a blink
     params: dict = {"look": (dx, dy), "mouth": float(state.get("mouth", 0.0)), "blink": blink}
-    if phase == "travel":
-        waddle = math.sin(float(state["since_start"]) * 16)
-        sx, sy = 1 + .05 * waddle, 1 - .05 * waddle
-        tilt = -dx * 7 + waddle * 2.5
-        zoom = ease_out_back(float(state["emerge"]))
+    if phase == "travel":  # a heavy, gliding hunt: barely any squash, a slight lean into the turn
+        glide = math.sin(float(state["since_start"]) * 9)
+        sx, sy = 1 + .015 * glide, 1 - .015 * glide
+        tilt = -dx * 6
+        zoom = ease_out_cubic(float(state["emerge"]))
     elif phase == "eat_anticipation":
         crouch = float(state["crouch"])
         sx, sy = 1 + .14 * crouch, 1 - .12 * crouch
@@ -471,17 +529,17 @@ def _creature_for_state(image: Image.Image, state: dict, local: float, scale: fl
         sx, sy = (1 + stretch, 1 - stretch * .6) if horizontal else (1 - stretch * .5, 1 + stretch)
         params["brow"] = float(state["brow"])
         tilt = -dx * 8
-    elif phase == "post_eat":
+    elif phase == "post_eat":  # a heavy shudder while red light pulses from its seams
         wobble = float(state["wobble"])
-        chew = math.sin(local * 30) * .5 + .5
-        sx, sy = 1 + .10 * wobble, 1 - .10 * wobble
-        params["cheeks"] = float(state["cheeks"]) * (.7 + .3 * chew)
-        params["happy"] = float(state["happy"])
-    elif phase == "winner":
+        pulse = math.sin(local * 22) * .5 + .5
+        sx, sy = 1 + .04 * wobble, 1 - .04 * wobble
+        params["cheeks"] = float(state["cheeks"]) * (.6 + .4 * pulse)
+        params["happy"] = float(state["happy"]) * .6  # a satisfied squint
+    elif phase == "winner":  # it turns to glare at the survivor, breathing slowly
         age = float(state["winner_age"])
         params["look"] = (dx, dy)
-        params["brow"] = 0.0
-        sx, sy = 1 - .04 * math.sin(age * 6), 1 + .04 * math.sin(age * 6)
+        params["brow"] = .5
+        sx, sy = 1 - .015 * math.sin(age * 4), 1 + .015 * math.sin(age * 4)
     params["stretch"] = (sx, sy)
     params["tilt"] = tilt
     center = state["character"]
@@ -527,6 +585,10 @@ def draw_lucky_round(spec: VideoSpec, local: float, size: tuple[int, int]) -> Im
 
 
 def draw_lucky_frame(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image.Image:
+    from ..puzzles.lucky_pick import is_snake
+    if is_snake(spec.rounds[0].data):  # the current snake chase; everything below draws the earlier maze version
+        from .lucky_snake import draw_snake_frame
+        return draw_snake_frame(spec, t, size)
     if t < spec.intro_duration:
         return draw_lucky_intro(spec, t, size)
     end = spec.intro_duration + spec.round_duration

@@ -10,6 +10,7 @@ from PIL import Image, ImageColor, ImageDraw, ImageFilter
 
 from ..config import BOUNCE_SELECTION_DURATION, PUZZLE_FIT_PALETTE as PALETTE
 from ..models import VideoSpec
+from ..palette import object_color
 from ..puzzles.bounce_arena import GRAVITY, gap_geometry
 from .easing import ease_in_out, ease_out_back, ease_out_cubic
 from .puzzle_fit import _background, _text, _timer, draw_puzzle_fit_outro
@@ -87,8 +88,13 @@ def exit_position(event: dict, age: float, slot: int) -> tuple[tuple[float, floa
 
 # ---------------------------------------------------------------- sprites
 
-@lru_cache(maxsize=24)
 def ball_sprite(color: str, diameter: int) -> Image.Image:
+    """A ball in the active object palette (see puzzly.palette)."""
+    return _ball_sprite(object_color(color), diameter)
+
+
+@lru_cache(maxsize=24)
+def _ball_sprite(color: str, diameter: int) -> Image.Image:
     """Glossy lit sphere with a crisp edge: lambert shading, a specular hotspot, and a thin darker rim."""
     pad = max(2, round(diameter * .22))
     side = diameter + pad * 2
@@ -330,7 +336,7 @@ def draw_bounce_round(spec: VideoSpec, local: float, size: tuple[int, int]) -> I
         _text(image, (540 * scale, 150 * scale), "WINNER!", fitted_font("WINNER!", round(900 * scale), round(84 * scale)),
               PALETTE["warning"], 1.0, max(.6, ease_out_back(_clamp(celebration / .35))))
         _text(image, (540 * scale, 240 * scale), f"{data.get('color_names', ['RED', 'BLUE', 'YELLOW', 'GREEN', 'PURPLE', 'ORANGE'])[winner].upper()} SURVIVES",
-              font(round(40 * scale)), data["colors"][winner], _clamp((celebration - .2) / .25))
+              font(round(40 * scale)), object_color(data["colors"][winner]), _clamp((celebration - .2) / .25))
         return image
     left = len(data["colors"]) - sum(1 for event in data["eliminations"] if float(event["time"]) <= simulation_time)
     color = PALETTE["danger"] if left <= 2 else PALETTE["text_light"]
