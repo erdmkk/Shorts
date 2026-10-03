@@ -1,0 +1,10 @@
+mate_in_1.csv: mate-in-one positions from the Lichess open puzzle database
+(https://database.lichess.org/#puzzles), released under Creative Commons CC0.
+
+Filter used to build it once (offline afterwards):
+- themes include mateIn1;
+- the position after the opponent's first move has exactly one mating move, which is the Lichess solution (checked with python-chess);
+- at least 500 plays and popularity of at least 80;
+- all puzzles rated 1600+ (Hard), the 5000 most-played rated 1200-1599 (Medium), and the 3000 most-played rated up to 1199 (Easy).
+
+Columns: id (Lichess puzzle id), fen (position to solve), move (UCI), san, rating, popularity, plays.

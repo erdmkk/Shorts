@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from ..config import LINE_ENTRANCE, LINE_TRACE, PUZZLE_FIT_PALETTE as PALETTE, line_round
 from ..models import RoundSpec, VideoSpec
 from ..palette import object_color
-from ..puzzles.line_weave import BOTTOM_Y, VERSION, crossings_of, line_points
+from ..puzzles.line_weave import BOTTOM_Y, crossings_of, is_weave, line_points
 from .easing import ease_in_out, ease_out_cubic
 from .effects import rounded_surface
 from .find_the_exit import _glow_disc, _symbol, _trail
@@ -257,4 +257,4 @@ def draw_line_frame(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image.I
 
 
 def uses_line_look(spec: VideoSpec) -> bool:
-    return spec.puzzle_type == "line_follow" and bool(spec.rounds) and spec.rounds[0].data.get("version") == VERSION
+    return spec.puzzle_type == "line_follow" and bool(spec.rounds) and is_weave(spec.rounds[0].data)

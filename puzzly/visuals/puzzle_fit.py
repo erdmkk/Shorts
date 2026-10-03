@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFilter
 
 from ..branding import draw_brand_mark
-from ..config import DARK_THEMES, PUZZLE_FIT_ART_PALETTES, dark_theme_for, PUZZLE_FIT_PALETTE as PALETTE, thinking_duration
+from ..config import DARK_THEMES, PUZZLE_FIT_ART_PALETTES, dark_theme_for, glow_strength, PUZZLE_FIT_PALETTE as PALETTE, thinking_duration
 from ..models import RoundSpec, VideoSpec
 from ..puzzles.puzzle_fit import board_card_bounds, phase_times, visual_state
 from .easing import ease_in_out, ease_out_back, ease_out_cubic
@@ -266,7 +266,7 @@ def _themed_background(size: tuple[int, int], glow_y: float, theme: str) -> Imag
     rgb = top * (1 - t) + bottom * t
     scale = width / 1080
     distance = np.hypot(x - width / 2, y - glow_y * scale) / (620 * scale)
-    rgb += (glow - top) * (np.exp(-distance * distance) * .38)[..., None]
+    rgb += (glow - top) * (np.exp(-distance * distance) * glow_strength(theme, .38))[..., None]
     vignette = np.hypot((x / width - .5) * 1.2, y / height - .5)
     rgb *= (1 - np.clip(vignette - .35, 0, 1) * .55)[..., None]
     image = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8))
@@ -392,20 +392,21 @@ def _level_header(image: Image.Image, level: int, total: int, opacity: float, sc
     _text(image, (start + width_big + gap + width_small / 2, y + 8 * scale), suffix, small, PALETTE["text_muted"], opacity)
 
 
-def timer_color(remaining_fraction: float) -> str:
+def timer_color(remaining_fraction: float, accent: str | None = None) -> str:
     if remaining_fraction > .5:
-        return PALETTE["accent"]
+        return accent or PALETTE["accent"]
     if remaining_fraction > .25:
         return PALETTE["warning"]
     return PALETTE["danger"]
 
 
 def _timer(image: Image.Image, remaining_seconds: float, total_seconds: float, opacity: float, scale: float,
-           show_seconds: bool = True) -> None:
+           show_seconds: bool = True, accent: str | None = None) -> None:
+    """`accent` replaces the palette accent while time is plentiful (a game's own frame colour)."""
     if opacity <= 0:
         return
     fraction = _clamp(remaining_seconds / total_seconds)
-    color = timer_color(fraction)
+    color = timer_color(fraction, accent)
     pulse = 0.0
     if remaining_seconds < 1.5:
         pulse = abs(math.sin(math.pi * 2 * remaining_seconds))
@@ -569,117 +570,21 @@ def _outro_glow(radius: int, color: str) -> Image.Image:
 def draw_puzzle_fit_outro(spec: VideoSpec, local: float, size: tuple[int, int], question_text: str | None = None,
                           prompt_text: str | None = None, *, palette: dict | None = None, background: Image.Image | None = None,
                           hero=None, total: int | None = None) -> Image.Image:
-    """End card with almost no reading: a glowing score ring (or the winner), one short line, and a tapped Follow button.
+    """The shared end card (see `end_card`): a score ring (or the winner), the YouTube and Instagram accounts, and a
+    FOLLOW FOR MORE button.
 
     Score games show `?/N` inside a ring that fills up. Pick games pass `hero`, a function returning the winner sprite
-    at a given pixel size, and a short question. The brand stays small at the bottom.
+    at a given pixel size, and a short question.
     """
-    pal = {**PALETTE, **(palette or {})}
-    scale = size[0] / 1080
-    image = (background if background is not None else _background(size, 800)).copy()
-    draw = ImageDraw.Draw(image, "RGBA")
-    # Soft particles drifting upward.
-    rng = random.Random(7)
-    for _ in range(24):
-        x, y0, speed, radius = rng.uniform(60, 1020), rng.uniform(300, 1800), rng.uniform(60, 160), rng.uniform(2, 5)
-        y = y0 - speed * local
-        alpha = round(90 * _clamp(local / .3) * (.4 + .6 * rng.random()))
-        draw.ellipse(((x - radius) * scale, (y - radius) * scale, (x + radius) * scale, (y + radius) * scale),
-                     fill=_rgb(pal["accent"]) + (alpha,))
-    # Hero ring.
-    cx, cy, ring = 540 * scale, 760 * scale, 200 * scale
-    pop = ease_out_back(_clamp(local / .35))
-    glow = _outro_glow(max(4, round(ring * 1.05)), pal["accent"])
-    pulse = .85 + .15 * math.sin(local * 6)
-    faded = glow.copy()
-    faded.putalpha(glow.getchannel("A").point(lambda value: round(value * pulse * _clamp(local / .3))))
-    image.paste(faded, (round(cx - faded.width / 2), round(cy - faded.height / 2)), faded)
-    draw = ImageDraw.Draw(image, "RGBA")
-    radius = ring * max(.3, pop)
-    width = max(3, round(18 * scale))
-    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=_rgb(pal["background"]) + (230,),
-                 outline=_rgb(pal["surface_edge"]) + (255,), width=width)
-    progress = ease_out_cubic(_clamp((local - .1) / .6))
-    if progress > 0:
-        draw.arc((cx - radius, cy - radius, cx + radius, cy + radius), -90, -90 + 360 * progress, fill=_rgb(pal["accent"]) + (255,), width=width)
-        end = math.radians(-90 + 360 * progress)
-        dot = width * .9
-        ex, ey = cx + math.cos(end) * (radius - width / 2), cy + math.sin(end) * (radius - width / 2)
-        draw.ellipse((ex - dot, ey - dot, ex + dot, ey + dot), fill=(255, 255, 255, 255))
-    inner = ease_out_back(_clamp((local - .15) / .35))
-    if inner > 0:
-        if hero is not None:
-            sprite = hero(max(2, round(230 * scale * inner)))
-            image.paste(sprite, (round(cx - sprite.width / 2), round(cy - sprite.height / 2)), sprite)
-        else:
-            count = total or spec.round_count
-            big, small = font(round(190 * scale)), font(round(110 * scale))
-            suffix = f"/{count}"
-            w_big, w_small = draw.textlength("?", font=big), draw.textlength(suffix, font=small)
-            start = cx - (w_big + w_small) / 2
-            _text(image, (start + w_big / 2, cy - 10 * scale), "?", big, pal["accent"], 1.0, inner)
-            _text(image, (start + w_big + w_small / 2, cy + 30 * scale), suffix, small, pal["text_light"], 1.0, inner)
-    # One short line.
-    line = (question_text or "").upper() if hero is not None else "COMMENT YOUR SCORE"
-    line_face = fitted_font(line, round(900 * scale), round(46 * scale))
-    _spaced_text(image, (cx, 1045 * scale), line, line_face, pal["text_light"], _clamp((local - .3) / .25), 6 * scale)
-    chevron = _clamp((local - .4) / .25)
-    if chevron > 0:
-        bob = 8 * math.sin(local * 9) * scale
-        y = 1110 * scale + bob
-        draw = ImageDraw.Draw(image, "RGBA")
-        draw.line(((cx - 22 * scale, y - 10 * scale), (cx, y + 10 * scale), (cx + 22 * scale, y - 10 * scale)),
-                  fill=_rgb(pal["accent"]) + (round(255 * chevron),), width=max(2, round(7 * scale)), joint="curve")
-    # Follow button, pressed by a tapping finger.
-    appear = ease_out_cubic(_clamp((local - .45) / .25))
-    if appear > 0:
-        press = math.sin(math.pi * _clamp((local - 1.0) / .14)) if local >= 1.0 else 0.0
-        zoom = 1 - .06 * press
-        bw, bh = 620 * scale * zoom, 128 * scale * zoom
-        by = (1255 + 60 * (1 - appear)) * scale
-        rounded_surface(image, (cx - bw / 2, by - bh / 2 + 10 * scale, cx + bw / 2, by + bh / 2 + 10 * scale), bh / 2,
-                        (0, 0, 0, round(120 * appear)))
-        fill = _rgb(pal["accent"])
-        if local >= 1.0:
-            flash = _clamp(1 - (local - 1.0) / .4)
-            fill = tuple(round(channel + (255 - channel) * .35 * flash) for channel in fill)
-        rounded_surface(image, (cx - bw / 2, by - bh / 2, cx + bw / 2, by + bh / 2), bh / 2, fill + (round(255 * appear),))
-        icon_x, icon_r = cx - bw / 2 + 78 * scale * zoom, 34 * scale * zoom
-        draw = ImageDraw.Draw(image, "RGBA")
-        ink = _rgb(pal["background"]) + (round(255 * appear),)
-        draw.ellipse((icon_x - icon_r, by - icon_r, icon_x + icon_r, by + icon_r), outline=ink, width=max(2, round(6 * scale)))
-        arm = icon_r * .5
-        draw.line(((icon_x - arm, by), (icon_x + arm, by)), fill=ink, width=max(2, round(6 * scale)))
-        draw.line(((icon_x, by - arm), (icon_x, by + arm)), fill=ink, width=max(2, round(6 * scale)))
-        _text(image, (cx + 40 * scale * zoom, by - 3 * scale), "Follow for more", font(round(54 * scale * zoom)), pal["background"], appear)
-        # The finger glides in, taps, and a ripple spreads.
-        if local >= .7:
-            travel = ease_out_cubic(_clamp((local - .7) / .3))
-            tx = icon_x + (180 * scale) * (1 - travel)  # lands on the + icon, never over the label
-            ty = by + (225 * scale) * (1 - travel) + 14 * scale
-            fade = _clamp(1 - (local - 1.35) / .25)
-            finger = (30 - 6 * press) * scale
-            draw.ellipse((tx - finger, ty - finger + 8 * scale, tx + finger, ty + finger + 8 * scale), fill=(0, 0, 0, round(90 * fade)))
-            draw.ellipse((tx - finger, ty - finger, tx + finger, ty + finger), fill=(255, 255, 255, round(235 * fade)),
-                         outline=_rgb(pal["background"]) + (round(200 * fade),), width=max(1, round(3 * scale)))
-            if local >= 1.0:
-                ripple = ease_out_cubic(_clamp((local - 1.0) / .5))
-                r = (30 + 150 * ripple) * scale
-                draw.ellipse((tx - r, ty - r, tx + r, ty + r), outline=(255, 255, 255, round(200 * (1 - ripple))),
-                             width=max(2, round(6 * (1 - ripple) * scale) + 1))
-    # Small brand at the bottom.
-    brand = _clamp((local - .6) / .3)
-    if brand > 0:
-        mark = round(56 * scale)
-        name_face = font(round(34 * scale))
-        name_w = ImageDraw.Draw(image).textlength(BRAND_NAME, font=name_face)
-        start = cx - (mark + 16 * scale + name_w) / 2
-        draw_brand_mark(image, (round(start + mark / 2), round(1470 * scale)), mark, pal, symbol=None)
-        _text(image, (start + mark + 16 * scale + name_w / 2, 1470 * scale), BRAND_NAME, name_face, pal["text_muted"], brand)
-    return image
+    from .end_card import draw_end_card
+    return draw_end_card(spec, local, size, question_text, prompt_text, palette=palette, background=background, hero=hero,
+                         total=total)
 
 
 def draw_puzzle_fit_frame(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image.Image:
+    if spec.rounds and spec.rounds[0].data.get("version") == "fit_v12":
+        from .puzzle_fit_v12 import draw_fit_frame
+        return draw_fit_frame(spec, t, size)
     if t < spec.intro_duration:
         return draw_puzzle_fit_intro(spec, t, size)
     rounds_end = spec.intro_duration + spec.round_count * spec.round_duration

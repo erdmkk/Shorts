@@ -9,6 +9,7 @@ from ..config import (DEFAULT_ROUNDS, EXIT_HARD_LEVEL_THINKING, EXIT_HARD_THINKI
                       PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION, exit_hard_average_round, exit_hard_round,
                       round_duration)
 from ..models import RoundSpec, VideoSpec
+from . import exit_polar, exit_shapes
 
 
 DIFFICULTY_RULES = {
@@ -166,26 +167,33 @@ HARD_LAYOUT = "deceptive_v2"
 # tracing back from a false exit is as long as solving from the start: together they get `decoy_quota` of the cells
 # off the answer route, each must keep at least MIN_DECOY_SHARE of its fair share, and each must reach
 # `decoy_depth` of the way down toward the start.
-HARD_LEVELS = (
-    {"columns": 8, "rows": 10, "sweeps": 1, "min_route": 32, "max_route": 70, "turn_ratio": .40,
-     "route_branches": 6, "false_share": .06, "max_straight": 5, "candidates": 10, "exits": 3},
-    {"columns": 10, "rows": 12, "sweeps": 2, "min_route": 50, "max_route": 100, "turn_ratio": .40,
-     "route_branches": 10, "false_share": .06, "max_straight": 5, "candidates": 10, "exits": 3},
-    {"columns": 12, "rows": 14, "sweeps": 2, "min_route": 70, "max_route": 140, "turn_ratio": .42,
-     "route_branches": 13, "false_share": .06, "max_straight": 5, "candidates": 5, "exits": 3},
-    {"columns": 13, "rows": 16, "sweeps": 2, "min_route": 82, "max_route": 170, "turn_ratio": .42,
-     "route_branches": 16, "false_share": .06, "max_straight": 6, "candidates": 4, "exits": 4},
-    {"columns": 14, "rows": 17, "sweeps": 2, "min_route": 92, "max_route": 190, "turn_ratio": .42,
-     "route_branches": 18, "false_share": .06, "max_straight": 6, "candidates": 3, "exits": 4},
+HARD_LEVELS = (  # every level about two columns and two rows larger than before: narrower, tighter corridors
+    {"columns": 10, "rows": 12, "sweeps": 1, "min_route": 46, "max_route": 105, "turn_ratio": .40,
+     "route_branches": 8, "false_share": .06, "max_straight": 5, "candidates": 6, "exits": 3, "thinking": 6.0},
+    {"columns": 12, "rows": 14, "sweeps": 2, "min_route": 68, "max_route": 140, "turn_ratio": .40,
+     "route_branches": 13, "false_share": .06, "max_straight": 5, "candidates": 5, "exits": 3, "thinking": 7.0},
+    {"columns": 14, "rows": 16, "sweeps": 2, "min_route": 90, "max_route": 190, "turn_ratio": .42,
+     "route_branches": 17, "false_share": .06, "max_straight": 6, "candidates": 3, "exits": 3, "thinking": 8.0},
+    {"columns": 15, "rows": 18, "sweeps": 2, "min_route": 104, "max_route": 230, "turn_ratio": .42,
+     "route_branches": 20, "false_share": .06, "max_straight": 6, "candidates": 3, "exits": 4, "thinking": 9.0},
+    {"columns": 16, "rows": 20, "sweeps": 2, "min_route": 118, "max_route": 270, "turn_ratio": .42,
+     "route_branches": 23, "false_share": .06, "max_straight": 6, "candidates": 2, "exits": 4, "thinking": 10.0},
 )
 MAZE_VERSION = 3
 DECOY_QUOTA = .62  # share of the off-route cells the false regions are grown to, together
 MIN_DECOY_SHARE = .6  # every false region keeps at least this much of its fair share of that quota
 DECOY_REACH = .4  # every false region reaches at least this far down (fraction of rows)
-# Earlier videos also used 9x11; it stays valid so saved records can still be re-rendered.
+# Earlier grid sizes stay valid so saved records can still be validated and re-rendered. A size keeps one thinking
+# time everywhere (10x12 and 12x14 were earlier levels too, with the same times).
 LEGACY_HARD_LEVELS = (
+    {"columns": 8, "rows": 10, "sweeps": 1, "min_route": 32, "max_route": 70, "turn_ratio": .40,
+     "route_branches": 6, "false_share": .06, "max_straight": 5, "candidates": 10, "exits": 3, "thinking": 5.0},
+    {"columns": 13, "rows": 16, "sweeps": 2, "min_route": 82, "max_route": 170, "turn_ratio": .42,
+     "route_branches": 16, "false_share": .06, "max_straight": 6, "candidates": 4, "exits": 4, "thinking": 8.0},
+    {"columns": 14, "rows": 17, "sweeps": 2, "min_route": 92, "max_route": 190, "turn_ratio": .42,
+     "route_branches": 18, "false_share": .06, "max_straight": 6, "candidates": 3, "exits": 4, "thinking": 9.0},
     {"columns": 9, "rows": 11, "sweeps": 2, "min_route": 42, "max_route": 84, "turn_ratio": .40,
-     "route_branches": 8, "false_share": .06, "max_straight": 5, "candidates": 10},
+     "route_branches": 8, "false_share": .06, "max_straight": 5, "candidates": 10, "thinking": 8.0},
 )
 HARD_CANDIDATES = 10  # default number of valid mazes generated per round
 DECOY_DEPTH = 0.3  # each false region must dive at least this deep (fraction of rows) ...
@@ -237,14 +245,13 @@ def grid_metrics(route: list[int], columns: int) -> dict[str, int]:
 
 
 def level_tier(index: int, count: int) -> int:
-    """Level n always uses grid tier n: 3 rounds stop at 12x14, 4 at 13x16, and 5 at 14x17."""
+    """Level n always uses grid tier n: 3 rounds stop at 14x16, 4 at 15x18, and 5 at 16x20."""
     return min(index, len(HARD_LEVELS) - 1)
 
 
 def level_thinking(rows: int, columns: int) -> float:
-    """Thinking seconds for a grid tier: level 1..5 get 5..9 seconds."""
-    tier = next(index for index, level in enumerate(HARD_LEVELS) if (level["rows"], level["columns"]) == (rows, columns))
-    return EXIT_HARD_LEVEL_THINKING[tier]
+    """Thinking seconds for a grid size: level 1..5 get 6..10 seconds (older sizes keep their own times)."""
+    return _level_for(rows, columns)["thinking"]
 
 
 def round_thinking(data: dict) -> float:
@@ -557,23 +564,76 @@ def _hard_round(index: int, level: dict, rng: random.Random, answer: int) -> Rou
     }, answer)
 
 
-def _generate_hard(seed: int, count: int) -> VideoSpec:
+def hard_answers(seed: int, count: int) -> list[int]:
+    """The correct exit of every level: an independent uniform draw per level, fixed before any maze is built, so
+    acceptance rates cannot bias it. Earlier versions dealt shuffled blocks, which made levels 1-3 always use three
+    different exits, so a viewer could deduce level 3 from levels 1 and 2; the user asked for truly random answers."""
+    answer_rng = random.Random(f"exit_hard_answers_v3:{seed}:{count}")
+    return [answer_rng.randrange(HARD_LEVELS[level_tier(index, count)].get("exits", 3)) for index in range(count)]
+
+
+SINGLE_SHAPES = ("rect", "circle") + exit_shapes.SHAPES  # rectangle, circle, hexagon, star, diamond
+MAZE_SHAPES = SINGLE_SHAPES + ("mixed",)  # the shape selector of the UI: one shape for the whole video, or a random mix
+
+
+def level_layouts(count: int, shape: str, seed: int = 0) -> list[str]:
+    """The maze of every level. A mixed video draws a different shape for every level at random (seeded, so the same seed
+    always makes the same video): five levels use each of the five shapes exactly once, in random order; with more levels than
+    shapes the draw starts over, never repeating a shape back to back. Difficulty follows the level, not the shape."""
+    if shape == "mixed":
+        rng = random.Random(f"exit_mix_v1:{seed}:{count}")
+        chosen: list[str] = []
+        while len(chosen) < count:
+            batch = rng.sample(SINGLE_SHAPES, len(SINGLE_SHAPES))
+            if chosen and batch[0] == chosen[-1]:
+                batch.append(batch.pop(0))
+            chosen += batch
+        return chosen[:count]
+    return [shape if shape in SINGLE_SHAPES else "rect"] * count
+
+
+def layout_answers(seed: int, count: int, layouts: list[str]) -> list[int]:
+    """The correct exit of every level. Rectangular-only videos keep `hard_answers`; circular ones draw from their own stream."""
+    if all(layout == "rect" for layout in layouts):
+        return hard_answers(seed, count)
+    answer_rng = random.Random(f"exit_hard_answers_v3:{seed}:{count}:{'/'.join(layouts)}")
+    exits = [exit_polar.POLAR_LEVELS[level_tier(index, count)]["exits"] if layout == "circle"
+             else exit_shapes.TIERS[level_tier(index, count)]["exits"] if layout in exit_shapes.SHAPES
+             else HARD_LEVELS[level_tier(index, count)].get("exits", 3) for index, layout in enumerate(layouts)]
+    return [answer_rng.randrange(number) for number in exits]
+
+
+def _generate_hard(seed: int, count: int, shape: str = "rect") -> VideoSpec:
     rng = random.Random(f"exit_hard_v5:{seed}:{count}")
+    polar_rng = random.Random(f"exit_polar_v1:{seed}:{count}:{shape}")
     rounds, used = [], set()
-    # Answers come from shuffled blocks per exit count (every exit is correct as often as the others), fixed before
-    # retries, so acceptance rates cannot bias them.
-    answer_rng = random.Random(f"exit_hard_answers_v2:{seed}:{count}")
-    blocks: dict[int, list[int]] = {}
-
-    def next_answer(exit_count: int) -> int:
-        if not blocks.get(exit_count):
-            blocks[exit_count] = list(range(exit_count))
-            answer_rng.shuffle(blocks[exit_count])
-        return blocks[exit_count].pop()
-
+    layouts = level_layouts(count, shape, seed)
+    answers = layout_answers(seed, count, layouts)
+    last_route: dict[str, int] = {}  # the previous level's route length in each kind of maze
     for index in range(count):
-        level = HARD_LEVELS[level_tier(index, count)]
-        answer = next_answer(level.get("exits", 3))
+        tier = level_tier(index, count)
+        if layouts[index] == "circle":
+            polar = exit_polar.POLAR_LEVELS[tier]
+            low = max(polar["min_route"], last_route.get("circle", 0) + 4)
+            item = exit_polar.build_level(index, tier, polar_rng, answers[index], used, low if low < polar["max_route"] - 10 else None)
+            used.add(item.fingerprint())
+            rounds.append(item)
+            last_route["circle"] = len(item.data["route"])
+            continue
+        if layouts[index] in exit_shapes.SHAPES:
+            kind = layouts[index]
+            rules = exit_shapes.rules_for(kind, tier)
+            low = max(rules["min_route"], last_route.get(kind, 0) + 4)
+            item = exit_shapes.build_level(index, kind, tier, polar_rng, answers[index], used,
+                                           low if low < rules["max_route"] - 10 else None)
+            used.add(item.fingerprint())
+            rounds.append(item)
+            last_route[kind] = len(item.data["route"])
+            continue
+        level = HARD_LEVELS[tier]
+        if "rect" in last_route:  # every level's answer route is clearly longer than the previous level's
+            level = {**level, "min_route": max(level["min_route"], last_route["rect"] + 6)}
+        answer = answers[index]
         # Keep several valid mazes and publish the most deceptive: the largest smallest decoy region.
         candidates = []
         for attempt in range(40000):  # the large grids are rarely accepted: keep trying until at least one is found
@@ -590,7 +650,8 @@ def _generate_hard(seed: int, count: int) -> VideoSpec:
                                                      if label != item.answer), len(item.data["route"])))
         used.add(best.fingerprint())
         rounds.append(best)
-    stable_id = sha256(f"exit_hard_v5:{seed}:{count}".encode()).hexdigest()[:12]
+        last_route["rect"] = len(best.data["route"])
+    stable_id = sha256((f"exit_hard_v5:{seed}:{count}" if shape == "rect" else f"exit_hard_v5:{seed}:{count}:{shape}").encode()).hexdigest()[:12]
     return VideoSpec(f"PZ-{stable_id}", "find_the_exit", seed, "hard", "paths", tuple(rounds),
                      PUZZLE_FIT_INTRO_DURATION, exit_hard_average_round(count), PUZZLE_FIT_OUTRO_DURATION)
 
@@ -660,15 +721,17 @@ def _hard_errors(data: dict, answer: int) -> list[str]:
     branches = _degree_branches(edges, route)
     if branches < level["route_branches"] or data.get("route_branch_points") != branches:
         return ["maze does not have enough route branch competition"]
-    if "thinking_seconds" in data and (level not in HARD_LEVELS or data["thinking_seconds"] != level_thinking(rows, columns)):
+    if "thinking_seconds" in data and (level is None or data["thinking_seconds"] != level["thinking"]):
         return ["maze thinking time does not match its level"]
     return []
 
 
-def generate(seed: int, difficulty: str = "easy", theme: str = "paths", round_count: int | None = None) -> VideoSpec:
+def generate(seed: int, difficulty: str = "easy", theme: str = "paths", round_count: int | None = None,
+             shape: str = "rect") -> VideoSpec:
+    """`shape` (Hard only): the mazes are rectangles (default), circles, or alternate between the two."""
     count = round_count or DEFAULT_ROUNDS["find_the_exit"]
     if difficulty == "hard":
-        return _generate_hard(seed, count)
+        return _generate_hard(seed, count, shape if shape in MAZE_SHAPES else "rect")
     rng = random.Random(f"exit_polish_v1:{seed}:{difficulty}:{count}")
     rounds, used = [], set()
     for index in range(count):
@@ -686,6 +749,10 @@ def generate(seed: int, difficulty: str = "easy", theme: str = "paths", round_co
 
 
 def errors(data: dict, answer: int) -> list[str]:
+    if data.get("layout") == exit_polar.POLAR_LAYOUT:
+        return exit_polar.errors(data, answer)
+    if data.get("layout") == exit_shapes.CELLS_LAYOUT:
+        return exit_shapes.errors(data, answer)
     if data.get("layout") == HARD_LAYOUT:
         return _hard_errors(data, answer)
     size, edges = data.get("size", 0), data.get("edges", [])

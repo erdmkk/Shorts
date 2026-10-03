@@ -42,15 +42,26 @@ video[data-testid='stVideo']{max-height:calc(100vh - 290px);width:auto!important
 st.markdown("### 🧩 Puzzly Shorts Generator")
 st.caption("Think • Play • Learn — çok turlu, tamamen yerel video üretimi")
 
+video_format = st.radio("Video formatı", ["Shorts / Reels (9:16)", "YouTube uzun video (16:9)"], horizontal=True)
+if video_format.startswith("YouTube"):
+    from puzzly.ui.longform_panel import longform_panel
+    longform_panel()
+    st.stop()
+
 controls_col, results_col = st.columns([0.4, 0.6], gap="large")
 
 with controls_col:
     type_col, difficulty_col = st.columns(2)
     selected_type_label = type_col.selectbox("Puzzle Type", list(TYPE_LABELS))
     selected_type = TYPE_LABELS[selected_type_label]
+    min_rating = None
     if selected_type in ("lucky_pick", "hidden_motion_hunt", "bounce_arena"):
         difficulty = None
-    elif selected_type in ("flash_count", "line_follow"):  # produced only in Hard
+    elif selected_type == "chess_mate":  # the minimum Lichess puzzle rating replaces the difficulty box
+        min_rating = int(difficulty_col.number_input("Min rating", min_value=400, max_value=2400, value=1800, step=50,
+                                                     help="Lichess bulmaca puanı; yalnızca bu puan ve üstü kullanılır"))
+        difficulty = "hard"
+    elif selected_type in ("flash_count", "line_follow", "cup_shuffle", "shade_spot", "memory_challenge", "mind_mix", "laser_maze"):  # produced only in Hard
         difficulty = difficulty_col.selectbox("Difficulty", ["Hard"], disabled=True).lower()
     else:
         difficulty = difficulty_col.selectbox("Difficulty", ["Easy", "Medium", "Hard"], index=2).lower()  # Puzzly for You videos are produced in Hard
@@ -190,13 +201,16 @@ with controls_col:
         st.selectbox("Theme", ["Jigsaw Boards"], disabled=True)
     challenges = None
     challenge_col, count_col = st.columns(2)
-    if selected_type not in ("memory_challenge", "lucky_pick", "hidden_motion_hunt", "bounce_arena"):
+    if selected_type not in ("memory_challenge", "lucky_pick", "hidden_motion_hunt", "bounce_arena", "chess_mate", "matchstick",
+                             "puzzle_fit", "cup_shuffle", "mind_mix"):
         challenge_label = challenge_col.selectbox("Challenges per video", ["Auto", "3", "4", "5"])
         challenges = None if challenge_label == "Auto" else int(challenge_label)
     else:
         if selected_type == "memory_challenge":
-            from puzzly.config import MEMORY_MEMORIZE
-            st.caption(f"3x3 ızgara • 9 şekil • 8 hafıza sorusu • {MEMORY_MEMORIZE[difficulty]:g} sn ezber • renk benzerliği {color_level}/4")
+            from puzzly.config import MEMORY_LEVELS
+            steps = " → ".join(f"{level['rows'] * level['cols']} kart ({'nerede' if level['kind'] == 'where' else 'hangisi kayboldu'}, "
+                               f"{level['memorize']:g} sn ezber)" for level in MEMORY_LEVELS)
+            st.caption(f"3 seviye • {steps} • renk benzerliği {color_level}/4 • yorum: skorun / 7")
     if selected_type == "flash_count":
         st.caption(f"Sayı görme • {FLASH_DIGITS[0]} → {FLASH_DIGITS[-1]} basamak • {FLASH_VISIBLE[4]:g} sn görünür (6 basamakta {FLASH_VISIBLE[6]:g} sn) • 3.0 sn düşünme")
     if selected_type == "cube_count":
@@ -210,6 +224,63 @@ with controls_col:
         st.caption("Moving hidden objects • 18.0 sn continuous loop • no reveal")
     if selected_type == "bounce_arena":
         st.caption("6 colors • 5.0 sn Pick One • deterministic arena physics")
+    if selected_type == "chess_mate":
+        from puzzly.puzzles.chess_mate import rating_pool
+        available = len(rating_pool(min_rating))
+        st.caption(f"Lichess bulmaca veritabanı • tek hamlede mat • puan {min_rating}+ : {available:,} bulmaca".replace(",", ".")
+                   + " • 30 sn sabit tahta • cevap gösterilmez (yorumlarda tartışılsın)")
+        if not available:
+            st.warning("Bu puanın üstünde bulmaca yok; daha düşük bir min rating gir.")
+    if selected_type == "puzzle_fit":
+        from puzzly.config import FIT_THINKING
+        st.caption(f"Tek büyük resim • 3 eksik parça (A, B, C) • 6 yamuk numaralı şık, 3'ü tuzak • "
+                   f"{FIT_THINKING[difficulty]:g} sn düşünme • yorum: A4 B1 C6")
+    if selected_type == "mind_mix":
+        from puzzly.config import MIX_FIT_THINKING
+        st.caption(f"3 oyun, 3 seviye, her oyundan 1 zor seviye • 1. Memory (3×3, nerede?) • 2. Shade Spot (5×5, hangi kare değişti?) • "
+                   f"3. Puzzle Fit (3 eksik parça, {MIX_FIT_THINKING:g} sn) • her oyun başında kısa tanıtım kartı • yorum: skorun / 3 • "
+                   "nesne paleti uygulanmaz (renkler bulmacanın kendisi)")
+    if selected_type == "shade_spot":
+        from puzzly.config import SHADE_LEVELS
+        steps = " → ".join(f"{level['grid']}×{level['grid']} (fark {level['delta']:g}, {level['thinking']:g} sn)" for level in SHADE_LEVELS)
+        st.caption(f"İki ızgara, bir karenin tonu farklı • {steps} • yorum: karenin yeri (örn. B3) • nesne paleti uygulanmaz (renkler bulmacanın kendisi)")
+    if selected_type == "laser_maze":
+        from puzzly.config import LASER_TIER_SETS, LASER_TIERS
+        count = challenges or DEFAULT_ROUNDS["laser_maze"]
+        steps = " → ".join(f"{LASER_TIERS[tier]['n']}×{LASER_TIERS[tier]['n']} ({LASER_TIERS[tier]['thinking']:g} sn)" for tier in LASER_TIER_SETS[count])
+        st.caption(f"Lazer aynalardan geçip hangi numaralı alıcıya ulaşır? • {count} seviye (en fazla 5), seviye sayısına göre zorluk ayarlanır: "
+                   f"{steps} • yorum: alıcı numarası")
+    if selected_type == "cup_shuffle":
+        from puzzly.config import CUP_LEVELS
+        levels = " → ".join(f"{level['cups']} bardak ({level['swaps']} karıştırma, {level['swap_seconds']:g} sn)" for level in CUP_LEVELS)
+        st.caption(f"Topu takip et • 3 seviye • {levels} • topun yeri seviye başında gösterilir • yorum: bardak numarası")
+    if selected_type == "matchstick":
+        from puzzly.config import MATCH_THINKING
+        match_times = "/".join(f"{value:g}" for value in MATCH_THINKING[difficulty])
+        st.caption(f"Kibrit çöpü denklemleri • 1 çöp oynat, denklemi doğru yap • 3 seviye, her biri daha zor • "
+                   f"{match_times} sn düşünme • her bulmacanın tek çözümü var")
+    match_frame = None
+    if selected_type == "matchstick":
+        from puzzly.config import MATCH_FRAMES
+        frame_labels = {"random": "Rastgele", **{key: label for key, (label, _) in MATCH_FRAMES.items()}}
+        match_frame = st.selectbox("Çerçeve rengi", list(frame_labels), index=1, format_func=frame_labels.get,
+                                   help="Kart çerçevesi, talimat balonu ve sayaç rengi")
+    maze_shape = None
+    if selected_type == "find_the_exit" and difficulty == "hard":
+        shape_labels = {"rect": "Dikdörtgen", "circle": "Daire", "hex": "Altıgen", "star": "Yıldız",
+                        "diamond": "Elmas", "mixed": "Karışık (rastgele)"}
+        maze_shape = st.selectbox("Labirent şekli", list(shape_labels), format_func=shape_labels.get,
+                                  help="Daire, altıgen, yıldız ve elmas: başlangıç ortada, çıkışlar çevrede (ilk 3 seviye 4, "
+                                       "sonraki 2 seviye 5 çıkış). Karışık: 5 seviyede dikdörtgen, daire, altıgen, yıldız ve elmasın her biri bir kez, rastgele sırada (dikdörtgen dahil); zorluk seviyeyle artar.")
+        if maze_shape == "mixed":
+            st.caption("Karışık: her seviye farklı bir şekil (5 seviyede beşi de birer kez), sıra rastgele ama aynı tohum hep aynı videoyu üretir; zorluk seviyeyle artar.")
+        elif maze_shape != "rect":
+            st.caption("Şekil seviyeleri hücre sayısıyla zorlaşır (≈100 → ≈300 hücre); düşünme süreleri dikdörtgenle aynı.")
+    chess_board = None
+    if selected_type == "chess_mate":
+        from puzzly.config import CHESS_BOARDS
+        board_labels = {"random": "Rastgele", **{key: label for key, (label, _, _) in CHESS_BOARDS.items()}}
+        chess_board = st.selectbox("Tahta rengi", list(board_labels), index=1, format_func=board_labels.get)
     count = count_col.selectbox("Number of videos", [1, 3, 5, 10, 30])
     quality_col, music_col, seed_col = st.columns(3)
     quality = quality_col.selectbox("Quality", ["Draft", "Final"]).lower()
@@ -235,11 +306,11 @@ with controls_col:
         durations = [(sum(intro_outro(kind, difficulty)) + round_duration(kind, difficulty)) if kind == "memory_challenge"
                      else (sum(intro_outro(kind, None)) + round_duration(kind, None)) if kind == "lucky_pick"
                      else sum(intro_outro(kind, difficulty)) + (challenges or default) * round_duration(kind, difficulty)
-                     for kind, default in DEFAULT_ROUNDS.items() if kind not in ("hidden_motion_hunt", "bounce_arena")]
+                     for kind, default in DEFAULT_ROUNDS.items() if kind not in ("hidden_motion_hunt", "bounce_arena", "chess_mate")]
         duration_summary = f"~{min(durations):.1f}–{max(durations):.1f} sn"
     else:
         if selected_type == "memory_challenge":
-            challenge_summary = "8 recall + final reveal"
+            challenge_summary = "3 levels, 7 questions"
             duration_summary = f"~{sum(intro_outro(selected_type, difficulty)) + round_duration(selected_type, difficulty):.1f} sn"
         elif selected_type == "lucky_pick":
             challenge_summary = "1 game"
@@ -250,6 +321,10 @@ with controls_col:
         elif selected_type == "bounce_arena":
             challenge_summary = "1 game"
             duration_summary = "≤30.0 sn (doğal fiziğe göre)"
+        elif selected_type == "chess_mate":
+            from puzzly.config import CHESS_DURATION
+            challenge_summary = "1 position"
+            duration_summary = f"{CHESS_DURATION:.1f} sn"
         else:
             effective = challenges or DEFAULT_ROUNDS[selected_type]
             challenge_summary = effective
@@ -257,6 +332,12 @@ with controls_col:
                 average_round = exit_hard_average_round(effective)  # maze levels last longer as they grow
             elif selected_type == "line_follow":
                 average_round = line_average_round(effective)  # bigger tangles get more thinking time
+            elif selected_type == "puzzle_fit":
+                from puzzly.config import fit_round
+                average_round = fit_round(difficulty)
+            elif selected_type == "laser_maze":
+                from puzzly.config import laser_default_average
+                average_round = laser_default_average(effective)  # bigger boards and longer beams get more time
             else:
                 average_round = round_duration(selected_type, difficulty)
             duration_summary = f"~{sum(intro_outro(selected_type, difficulty)) + effective * average_round:.1f} sn"
@@ -278,8 +359,8 @@ with controls_col:
 
             def update_progress(index: int, total: int, spec, state: str) -> None:
                 label = "tamamlandı" if state == "complete" else "işleniyor"
-                challenge_text = ("8 recall" if spec.puzzle_type == "memory_challenge" else
-                                  ("1 game" if spec.puzzle_type in ("lucky_pick", "bounce_arena") else
+                challenge_text = ("3 levels" if spec.puzzle_type == "memory_challenge" else
+                                  ("1 game" if spec.puzzle_type in ("lucky_pick", "bounce_arena", "chess_mate") else
                                    ("7 moving objects" if spec.puzzle_type == "hidden_motion_hunt" else f"{spec.round_count} challenge")))
                 status.info(f"{index}/{total} • {spec.puzzle_type} • {challenge_text} • {label} • {time.perf_counter() - started:.1f} sn")
                 progress_bar.progress((index if state == "complete" else index - 1) / total)
@@ -288,10 +369,25 @@ with controls_col:
             specs = generate_unique_specs(requested_count, selected_type, difficulty or "easy", theme, base_seed,
                                           operation=operation, challenges=challenges, background_bytes=background_bytes,
                                           placement_mode=placement_mode, manual_objects=manual_objects,
-                                          background=background_choice, palette=palette_choice)
+                                          background=background_choice, palette=palette_choice, min_rating=min_rating,
+                                          maze_shape=maze_shape)
             if music_on:  # stored in metadata, which stays out of the fingerprint
                 from dataclasses import replace as _replace
                 specs = [_replace(spec, metadata={**spec.metadata, "music": "on"}) for spec in specs]
+            if match_frame:  # frame/timer colour: metadata, resolved per video so a Final re-render matches
+                import random as _random
+                from dataclasses import replace as _replace
+                from puzzly.config import MATCH_FRAMES
+                specs = [_replace(spec, metadata={**spec.metadata, "frame": match_frame if match_frame != "random"
+                                                  else _random.Random(f"match_frame:{spec.seed}").choice(sorted(MATCH_FRAMES))})
+                         for spec in specs]
+            if chess_board:  # board colours: metadata as well, resolved per video so a Final re-render matches
+                import random as _random
+                from dataclasses import replace as _replace
+                from puzzly.config import CHESS_BOARDS
+                specs = [_replace(spec, metadata={**spec.metadata, "board": chess_board if chess_board != "random"
+                                                  else _random.Random(f"chess_board:{spec.seed}").choice(sorted(CHESS_BOARDS))})
+                         for spec in specs]
             if quality == "draft":
                 batch_dir, previews = render_draft_previews(specs, progress=update_progress)
                 videos = [preview.video_path for preview in previews]
@@ -301,6 +397,8 @@ with controls_col:
             else:
                 batch_dir, videos = render_batch(specs, quality=quality, progress=update_progress)
                 st.session_state.pop("draft_previews", None)
+                st.session_state["chess_answers"] = {str(path): spec.rounds[0].answer for path, spec in zip(videos, specs)
+                                                     if spec.puzzle_type == "chess_mate"}
             progress_bar.progress(1.0)
             if quality == "draft":
                 status.success(
@@ -311,10 +409,17 @@ with controls_col:
                 st.session_state["videos"], st.session_state["batch_dir"] = [str(path) for path in videos], str(batch_dir)
         except ValueError as exc:
             message = str(exc)
-            st.error(message if selected_type == "hidden_motion_hunt" else "Seed yalnızca tam sayı olmalıdır.")
+            st.error(message if selected_type in ("hidden_motion_hunt", "chess_mate") else "Seed yalnızca tam sayı olmalıdır.")
         except Exception as exc:
             LOGGER.exception("Generation failed")
             st.error(f"Video üretilemedi: {exc}")
+
+def show_chess_answer(answer: dict) -> None:
+    """The mating move, for the creator only: the video never shows it."""
+    from puzzly.puzzles.chess_mate import move_label
+    st.success(f"♟️ Mat hamlesi: **{move_label(answer)}**")
+    st.caption("Yalnızca sana gösterilir; videoda, kapakta ve açıklamada yer almaz.")
+
 
 with results_col:
     if not st.session_state.get("draft_previews") and not st.session_state.get("videos"):
@@ -330,6 +435,8 @@ with results_col:
                 st.markdown("**Draft önizleme**")
                 st.caption("Bu dosyalar geçici önizlemedir; Kaydet düğmesine basılmadan output klasörüne ve geçmişe eklenmez.")
                 st.caption(f"Seed: {preview.spec.seed} • {preview.spec.puzzle_type} • geçici Draft")
+                if preview.spec.puzzle_type == "chess_mate":
+                    show_chess_answer(preview.spec.rounds[0].answer)
                 if st.button("Draft'ı Kaydet", key=f"save-draft-{key}",
                              disabled=key in saved, use_container_width=True):
                     try:
@@ -370,13 +477,17 @@ with results_col:
             cover_path = str(Path(video_path).with_suffix(".jpg"))
             info_col.markdown("**Üretilen video**")
             info_col.caption(f"Video: {video_path}\n\nCover: {cover_path}")
+            if video_path in st.session_state.get("chess_answers", {}):
+                with info_col:
+                    show_chess_answer(st.session_state["chess_answers"][video_path])
 
 with controls_col:
     if os.name == "nt" and st.button("Çıktı klasörünü aç", use_container_width=True):
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         os.startfile(Path(st.session_state.get("batch_dir", OUTPUT_DIR)))  # type: ignore[attr-defined]
 
-    history_records = [record for record in HistoryStore().records() if record.output_filename]
+    history_records = [record for record in HistoryStore().records()  # long-form videos are rendered from their own panel
+                       if record.output_filename and not record.puzzle_type.startswith("longform")]
     if history_records:
         with st.expander("Kaydedilmiş videoyu Final olarak yeniden üret"):
             selected_sequence = st.selectbox(

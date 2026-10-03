@@ -16,3 +16,4 @@ data/*.tmp
 data/draft_previews/
 *TEMP_MPY_*
 *.out
+data/longform_previews/

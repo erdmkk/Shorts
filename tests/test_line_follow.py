@@ -27,9 +27,12 @@ def test_videos_are_valid_deterministic_hard_and_ramp_up() -> None:
     assert lf.generate(3) == SPEC
     # Every level is harder: longer lines, and the figure's line crosses at least the level's (growing) minimum.
     budgets = [lw.TIERS[item.data["tier"]]["length"] for item in SPEC.rounds]
-    assert budgets == sorted(budgets) and budgets[-1] >= 2 * budgets[0]
+    assert all(a < b for a, b in zip(budgets, budgets[1:])) and budgets[-1] >= 1.8 * budgets[0]
+    # One more target and line as the levels climb: 4, 5, 5, 6, 6.
+    assert [len(item.data["lines"]) for item in SPEC.rounds] == [4, 5, 5, 6, 6]
+    assert [len(item.data["lines"]) for item in SHORT.rounds] == [4, 5, 6]
     drawn = [len(lw.line_points(item.data["lines"][0])) * lw.SAMPLE for item in SPEC.rounds]
-    assert drawn[-1] >= 1.5 * drawn[0]
+    assert drawn[-1] >= 1.3 * drawn[0]  # six lines share the last boards, so the figure's line grows less than in V7
     minimums = [lw.TIERS[item.data["tier"]]["min_cross"] for item in SPEC.rounds]
     assert minimums == sorted(minimums) and minimums[0] >= 8
     assert all(item.data["answer_crossings"] >= minimum for item, minimum in zip(SPEC.rounds, minimums))
@@ -67,8 +70,13 @@ def test_the_board_is_full_and_tangled() -> None:
         # So are the others, and they grow level by level too.
         assert all(len(lw.line_points(line)) * lw.SAMPLE >= tier["decoy"][0] * lw.MIN_DECOY_SHARE - lw.STEP
                    for line in data["lines"][1:])
-    decoy_floor = [lw.TIERS[item.data["tier"]]["decoy"][0] for item in SPEC.rounds]
-    assert decoy_floor == sorted(decoy_floor) and decoy_floor[-1] >= 1.4 * decoy_floor[0]
+    # The board fills up level by level: the acceptance floors rise, and from level 2 on it holds far more line than
+    # level 1 (with six lines the last levels are as full as the readability rules allow).
+    floors = [(lw.TIERS[tier]["min_cover"], lw.TIERS[tier]["min_cross"]) for tier in range(len(lw.TIERS))]
+    assert all(a[0] < b[0] and a[1] < b[1] for a, b in zip(floors, floors[1:]))
+    ink = [sum(len(lw.line_points(line)) for line in item.data["lines"]) * lw.SAMPLE for item in SPEC.rounds]
+    assert all(value >= 1.2 * ink[0] for value in ink[1:])
+    assert SPEC.rounds[-1].data["coverage"] > SPEC.rounds[0].data["coverage"]
 
 
 def test_the_tangle_is_smooth_and_readable() -> None:
@@ -133,3 +141,17 @@ def test_earlier_light_theme_version_still_validates() -> None:
     spec = lf.generate_legacy(5, "hard")
     for item in spec.rounds:
         assert lf.errors(item.data, item.answer) == []
+
+
+def test_earlier_weave_v7_records_still_validate(monkeypatch) -> None:
+    import random
+    # Weave V7 had 5, 5, 5, 4, 4 lines and 7..15 s: rebuild one of its level-4 boards and validate it with today's code.
+    monkeypatch.setattr(lw, "TIERS", lw.TIERS_V7)
+    monkeypatch.setattr(lw, "LINE_THINKING", lw.LINE_THINKING_V7)
+    monkeypatch.setattr(lw, "VERSION", "weave_v7")
+    old = lw.make_round(3, 3, random.Random("v7-record"))
+    monkeypatch.undo()
+    assert old.data["version"] == "weave_v7" and len(old.data["lines"]) == 4 and old.data["thinking_seconds"] == 13.0
+    assert lf.errors(old.data, old.answer) == []
+    assert lw.is_weave(old.data) and lw.tier_table(old.data) is lw.TIERS_V7
+    assert lf.errors({**old.data, "version": lw.VERSION}, old.answer)  # the same board is not a valid V8 level 4

@@ -232,7 +232,7 @@ def _routing(rng: random.Random, difficulty: str) -> tuple[list[int], int, dict[
 # ---------------------------------------------------------------- current: free-form tangle (see line_tangle)
 
 def generate(seed: int, difficulty: str | None = None, theme: str = "lines", round_count: int | None = None) -> VideoSpec:
-    """Current Line Follow (Weave V7, see line_weave): produced only in Hard; every video ramps up level by level."""
+    """Current Line Follow (Weave V8, see line_weave): produced only in Hard; every video ramps up level by level."""
     from . import line_weave
     return line_weave.generate(seed, round_count or DEFAULT_ROUNDS["line_follow"])
 
@@ -266,8 +266,8 @@ def generate_legacy(seed: int, difficulty: str = "easy", theme: str = "lines", r
 
 
 def errors(data: dict, answer: int) -> list[str]:
-    if data.get("version") == "weave_v7":
-        from . import line_weave
+    from . import line_weave
+    if line_weave.is_weave(data):
         return line_weave.validate(data, answer)
     if data.get("version") == "tangle_v4":  # earlier samples; they can no longer be rendered
         from . import line_tangle

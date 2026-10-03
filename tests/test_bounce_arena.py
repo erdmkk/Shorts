@@ -235,9 +235,9 @@ def test_spec_fingerprint_validation_filename_and_sqlite(tmp_path) -> None:
     spec = generate_spec("bounce_arena", 4402)
     assert validation_errors(spec) == []
     assert spec.difficulty is None and spec.round_count == 1
-    assert spec.outro_duration == pytest.approx(1.7)
-    assert spec.total_duration == pytest.approx(spec.round_duration + 1.7, abs=1e-3)
-    assert spec.total_duration <= arena.MAX_VIDEO_DURATION == 30.0
+    assert spec.outro_duration == pytest.approx(3.7)
+    assert spec.total_duration == pytest.approx(spec.round_duration + 3.7, abs=1e-3)
+    assert spec.total_duration <= arena.MAX_VIDEO_DURATION == 32.0  # 30 s of game plus the longer end card
     assert output_stem(23, spec) == "PZ_0023_bounce_arena"
     assert spec.fingerprint() == generate_spec("bounce_arena", 4402).fingerprint()
     changed_data = dict(spec.rounds[0].data)

@@ -15,7 +15,7 @@ ARENA_CENTER = (540.0, 930.0)
 ARENA_RADIUS = 400.0
 FIXED_TIMESTEP = 1 / 240
 TIMELINE_FPS = 30
-MAX_VIDEO_DURATION = 30.0
+MAX_VIDEO_DURATION = 32.0  # 30 s of game plus the 2 s the end card grew by: the simulation window stays 9-21.8 s
 FIXED_VIDEO_OVERHEAD = BOUNCE_SELECTION_DURATION + BOUNCE_WINNER_HOLD + BOUNCE_CTA_DURATION
 ACCEPTANCE_MAX_SECONDS = MAX_VIDEO_DURATION - FIXED_VIDEO_OVERHEAD
 ACCEPTANCE_MIN_SECONDS = 9.0  # shorter games feel over before the tension builds
@@ -429,7 +429,7 @@ def errors(data: dict[str, Any], answer: Any) -> list[str]:
     expected_timeline = BOUNCE_SELECTION_DURATION + duration + BOUNCE_WINNER_HOLD
     if not math.isclose(float(data.get("timeline_duration", 0)), expected_timeline, abs_tol=1e-3):
         result.append("bounce arena timeline duration is inconsistent")
-    if float(data.get("timeline_duration", math.inf)) + BOUNCE_CTA_DURATION > MAX_VIDEO_DURATION + 1e-6:
+    if float(data.get("timeline_duration", math.inf)) + float(data.get("cta_duration", BOUNCE_CTA_DURATION)) > MAX_VIDEO_DURATION + 1e-6:
         result.append("bounce arena total video duration exceeds thirty seconds")
     arena = data.get("arena", {})
 

@@ -46,7 +46,7 @@ def test_lucky_pick_700_specs_are_valid_deterministic_and_fair() -> None:
     for seed in range(700):
         spec = generate(seed); validate_spec(spec)
         assert spec == generate(seed) and spec.fingerprint() == generate(seed).fingerprint()
-        assert spec.difficulty is None and spec.round_count == 1 and 19 <= spec.total_duration <= 30
+        assert spec.difficulty is None and spec.round_count == 1 and 19 <= spec.total_duration <= 32  # 30 s plus the longer end card
         assert spec.intro_duration == PUZZLE_FIT_INTRO_DURATION and spec.outro_duration == PUZZLE_FIT_OUTRO_DURATION
         game = spec.rounds[0]; data = game.data; targets = data["targets"]
         assert data["map_version"] == MAP_VERSION

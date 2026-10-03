@@ -1,4 +1,8 @@
-"""Cube Count: isometric 5x5 (4x4 on Easy) board with 1-3 cube stacks, flashed briefly, then counted.
+"""Cube Count: isometric board with cube stacks, flashed briefly, then counted; and three more ways to count.
+
+A video mixes formats (`mode`, see `CUBE_MODES`): `grid` is the classic flash described below, `rain` drops cubes from above
+that vanish as they land, `sweep` slides a train of towers across the screen, and `rain_color` rains cubes of three colours
+of which only one counts. Older rounds have no `mode` and are `grid`.
 
 Besides the one-cell towers, every level has a big block (`size` 2): one box on a 2x2 footprint, one cube tall, that
 counts as ONE cube. It has no inner edges, so a hurried viewer counts it as four.
@@ -13,8 +17,9 @@ import random
 import numpy as np
 from PIL import Image, ImageDraw
 
-from ..config import (CUBE_COLORS, CUBE_ROUND_COLORS, THEME_CLASHING_CUBES, dark_theme_for, CUBE_VISIBLE, DEFAULT_ROUNDS, PUZZLE_FIT_INTRO_DURATION,
-                      PUZZLE_FIT_OUTRO_DURATION, round_duration)
+from ..config import (CUBE_COLORS, CUBE_FALL_RANGE, CUBE_MODES, CUBE_RAIN, CUBE_RAIN_MIN_GAP, CUBE_ROUND_COLORS, CUBE_SWEEP,
+                      CUBE_SWEEP_RANGE, CUBE_TARGET_INTRO, CUBE_TARGET_RANGE, THEME_CLASHING_CUBES, dark_theme_for, CUBE_VISIBLE, DEFAULT_ROUNDS, READY_INTRO_DURATION,
+                      PUZZLE_FIT_OUTRO_DURATION, cube_average_round, cube_mode, round_duration)
 from ..models import RoundSpec, VideoSpec
 
 GRID = {"easy": 4, "medium": 5, "hard": 5}
@@ -45,6 +50,21 @@ BIG_BLOCKS = {"easy": (1, 1, 1), "medium": (1, 1, 1), "hard": (1, 1, 1)}  # big 
 CUBE_VERSION = 2  # rounds with big blocks
 GRID_BIG = {"easy": 5, "medium": 6, "hard": 6}  # one cell larger than GRID: the 2x2 block needs the room
 ATTEMPTS = 8000
+# The other formats. `RAIN_TOTALS` counts every falling cube (the big block is one), `COLOR_*` the drops of a colour rain and how
+# many of them are the counted colour. Colours of a rain are hues that cannot be mistaken for each other.
+RAIN_TOTALS = {"easy": (7, 9), "medium": (9, 12), "hard": (11, 15)}
+SWEEP_TOTALS = {"easy": (6, 8), "medium": (8, 11), "hard": (10, 14)}
+COLOR_DROPS = {"easy": (10, 12), "medium": (12, 15), "hard": (14, 18)}
+COLOR_TARGETS = {"easy": (3, 5), "medium": (4, 6), "hard": (5, 8)}
+# Colours of a colour rain come from three different families (blue, green, yellow/amber, red/pink), so no two can be mistaken.
+HUE_FAMILY = {"sky": "blue", "violet": "blue", "green": "green", "teal": "green", "yellow": "yellow", "amber": "yellow",
+              "coral": "red", "pink": "red"}
+SWEEP_TOWERS = {"easy": 4, "medium": 5, "hard": 5}
+SWEEP_GRID = 8  # the sweep is drawn on a finer floor so the whole train fits the screen
+SWEEP_LANE = 8  # the lane's depth (i + j)
+SWEEP_Y = 900.0  # screen y of the lane's centre
+SWEEP_GAP = 0.3  # tile widths between the towers of the train
+FLIGHT_FADE = 0.28  # a landed cube fades over this long
 
 
 def size_of(stack: dict) -> int:
@@ -311,30 +331,298 @@ def _make_round(index: int, difficulty: str, tier: int, previous_total: int | No
     }, total)
 
 
+# ---------------------------------------------------------------- the sweep: a train of towers crossing the screen
+
+def sweep_geo() -> dict[str, float]:
+    """The finer floor of the sweep, with its lane (depth i + j = SWEEP_LANE) centred on SWEEP_Y."""
+    geo = dict(geometry(SWEEP_GRID))
+    geo["origin_y"] = SWEEP_Y - (SWEEP_LANE + 1) * geo["tile_h"] / 2
+    return geo
+
+
+def item_width(item: dict) -> int:
+    """Tile widths an item takes on screen: a tower is one, the big block two."""
+    return 2 if item.get("size", 1) == 2 else 1
+
+
+def train_width(items: list[dict]) -> float:
+    return sum(item_width(item) for item in items) + SWEEP_GAP * (len(items) - 1)
+
+
+def sweep_offsets(items: list[dict]) -> list[float]:
+    """Centres of the items in tile widths from the middle of the train, left to right."""
+    x, offsets = -train_width(items) / 2, []
+    for item in items:
+        width = item_width(item)
+        offsets.append(x + width / 2)
+        x += width + SWEEP_GAP
+    return offsets
+
+
+def lane_cell(geo: dict[str, float], ux: float, size: int) -> list[float]:
+    """Floor cell (fractional) whose footprint sits `ux` pixels right of the screen centre on the lane."""
+    half = ux / geo["tile_w"]
+    reach = SWEEP_LANE - (1 if size == 2 else 0)  # a 2x2 block's centre is one deeper
+    i = (reach + 2 * half) / 2
+    return [i, reach - i]
+
+
+def sweep_stacks(data: dict, shift: float = 0.0) -> list[dict]:
+    """The train as stacks (left to right), `shift` pixels right of the parked row that is centred on the screen."""
+    geo = sweep_geo()
+    stacks = []
+    for item, offset in zip(data["items"], sweep_offsets(data["items"])):
+        size = item_width(item)
+        stack = {"cell": lane_cell(geo, offset * geo["tile_w"] + shift, size), "height": item["height"]}
+        if size == 2:
+            stack["size"] = 2
+        stacks.append(stack)
+    return stacks
+
+
+def _mixed_train(heights: list[int]) -> bool:
+    """A train that cannot be counted by rhythm: several heights, none on more than two towers, not a staircase."""
+    counts = {height: heights.count(height) for height in heights}
+    return (len(counts) >= (3 if len(heights) > 4 else 2) and max(counts.values()) <= 2
+            and heights != sorted(heights) and heights != sorted(heights, reverse=True))
+
+
+def _sweep_round(index: int, difficulty: str, previous_total: int | None, color_id: str, rng: random.Random) -> RoundSpec:
+    low, high = SWEEP_TOTALS[difficulty]
+    towers, tallest = SWEEP_TOWERS[difficulty], 4 if difficulty == "hard" else 3
+    totals = [value for value in range(low, high + 1) if value != previous_total]
+    for _ in range(ATTEMPTS):
+        total = rng.choice(totals)
+        heights = [rng.randint(1, tallest) for _ in range(towers)]
+        if sum(heights) == total - 1 and _mixed_train(heights):  # the big block is the last cube
+            break
+    else:
+        raise RuntimeError("Could not create a cube train")
+    items = [{"height": height, "size": 1} for height in heights]
+    items.insert(rng.randint(0, towers), {"height": 1, "size": 2})
+    return RoundSpec(index, "cube_count", {
+        "version": CUBE_VERSION + 1, "mode": "sweep", "grid": SWEEP_GRID, "items": items, "total": total, "level": index + 1, "tier": 1,
+        "sweep_seconds": CUBE_SWEEP[difficulty], "color_id": color_id}, total)
+
+
+# ---------------------------------------------------------------- the rain: cubes fall from above and vanish as they land
+
+def drop_width(drop: dict) -> int:
+    return 2 if drop.get("size", 1) == 2 else 1
+
+
+def flight_window(drop: dict, fall: float) -> tuple[float, float]:
+    return drop["at"], drop["at"] + fall + FLIGHT_FADE
+
+
+def apart_on_screen(first: dict, second: dict) -> bool:
+    """Two cubes in the air or fading together never overlap: their columns are at least a cube apart."""
+    gap = abs((first["cell"][0] - first["cell"][1]) - (second["cell"][0] - second["cell"][1]))
+    return gap >= drop_width(first) + drop_width(second)
+
+
+def _rain_drops(difficulty: str, colors: list[str], grid: int, rng: random.Random) -> tuple[list[dict], float] | None:
+    """One drop per colour in `colors` (one of them the big block), timed and placed so every cube can be counted."""
+    rain = CUBE_RAIN[difficulty]
+    fall, interval = rain["fall"], rain["interval"]
+    at, drops = 0.0, []
+    for color in colors:
+        if drops:
+            at += max(CUBE_RAIN_MIN_GAP, round(interval * rng.uniform(0.75, 1.25), 3))
+        drops.append({"at": round(at, 3), "cell": None, "size": 1, "color": color})
+    rng.choice(drops)["size"] = 2  # exactly one big block falls: it counts as ONE cube
+    for drop in drops:
+        span = grid - (1 if drop["size"] == 2 else 0)
+        cells = [(i, j) for i in range(span) for j in range(span)]
+        rng.shuffle(cells)
+        for cell in cells:
+            drop["cell"] = list(cell)
+            others = [other for other in drops if other is not drop and other["cell"] is not None
+                      and flight_window(other, fall)[0] < flight_window(drop, fall)[1]
+                      and flight_window(drop, fall)[0] < flight_window(other, fall)[1]]
+            if all(apart_on_screen(drop, other) for other in others):
+                break
+        else:
+            return None
+    return drops, round(drops[-1]["at"] + fall, 3)
+
+
+def _rain_round(index: int, difficulty: str, previous_total: int | None, color_id: str, rng: random.Random,
+                clashing: tuple[str, ...], colored: bool) -> RoundSpec:
+    grid = GRID_BIG[difficulty]
+    extra: dict = {}
+    if colored:
+        low, high = COLOR_DROPS[difficulty]
+        target_low, target_high = COLOR_TARGETS[difficulty]
+        others = [color for color in CUBE_ROUND_COLORS if HUE_FAMILY[color] != HUE_FAMILY[color_id] and color not in clashing]
+        for _ in range(ATTEMPTS):
+            count = rng.randint(low, high)
+            target = rng.choice([value for value in range(target_low, target_high + 1) if value != previous_total])
+            first = rng.sample(others, 2)
+            if HUE_FAMILY[first[0]] == HUE_FAMILY[first[1]]:
+                continue
+            split = rng.randint(2, count - target - 2)
+            colors = [color_id] * target + [first[0]] * split + [first[1]] * (count - target - split)
+            rng.shuffle(colors)
+            built = _rain_drops(difficulty, colors, grid, rng)
+            if built:
+                break
+        else:
+            raise RuntimeError("Could not create a colour rain")
+        drops, seconds = built
+        answer = sum(1 for drop in drops if drop["color"] == color_id)
+        extra = {"colors": [color_id, *first], "target": color_id}
+    else:
+        low, high = RAIN_TOTALS[difficulty]
+        for _ in range(ATTEMPTS):
+            count = rng.choice([value for value in range(low, high + 1) if value != previous_total])
+            built = _rain_drops(difficulty, [color_id] * count, grid, rng)
+            if built:
+                break
+        else:
+            raise RuntimeError("Could not create a cube rain")
+        drops, seconds = built
+        answer = count
+    rain = CUBE_RAIN[difficulty]
+    return RoundSpec(index, "cube_count", {
+        "version": CUBE_VERSION + 1, "mode": "rain_color" if colored else "rain", "grid": grid, "drops": drops, "total": answer,
+        "level": index + 1, "tier": 1, "fall": rain["fall"], "interval": rain["interval"], "rain_seconds": seconds,
+        "color_id": color_id, **extra, **({"intro_seconds": CUBE_TARGET_INTRO} if colored else {})}, answer)
+
+
+# ---------------------------------------------------------------- the video
+
+def _round_colors(modes: tuple[str, ...], clashing: tuple[str, ...], seed: int, difficulty: str) -> list[str]:
+    """A cube colour for every level: new ones first, never the same twice in a row. A colour rain uses clearly different hues."""
+    rng = random.Random(f"cube_colors_v2:{seed}:{difficulty}:{len(modes)}")
+    chosen: list[str] = []
+    for mode in modes:
+        allowed = [color for color in CUBE_ROUND_COLORS if color not in clashing]
+        fresh = [color for color in allowed if color not in chosen] or allowed
+        chosen.append(rng.choice([color for color in fresh if not chosen or color != chosen[-1]] or fresh))
+    return chosen
+
+
 def generate(seed: int, difficulty: str = "easy", theme: str = "isometric_cubes", round_count: int | None = None,
-             background: str | None = None) -> VideoSpec:
-    """`background` is the creator's chosen background tone, if any; the cube colours avoid it."""
+             background: str | None = None, formats: bool = True) -> VideoSpec:
+    """`background` is the creator's chosen background tone, if any; the cube colours avoid it. With `formats` (the default) the
+    levels use different ways to count (`CUBE_MODES`); without it every level is the classic flash (older videos)."""
     difficulty = difficulty if difficulty in GRID else "easy"
     count = round_count or DEFAULT_ROUNDS["cube_count"]
     rng = random.Random(f"cube_count_v1:{seed}:{difficulty}:{count}")
-    # Every round gets its own cube colour (never the same twice in a video), so each level feels like a new challenge.
     tone = background if background in THEME_CLASHING_CUBES else dark_theme_for("cube_count", seed)
     clashing = THEME_CLASHING_CUBES[tone]  # keep the cubes readable on this video's background
-    pool = [color for color in CUBE_ROUND_COLORS if color not in clashing]
-    colors = random.Random(f"cube_colors_v1:{seed}:{difficulty}:{count}").sample(pool, min(count, len(pool)))
+    modes = CUBE_MODES.get(count, ("grid",) * count) if formats else ("grid",) * count
+    if formats:
+        colors = _round_colors(modes, clashing, seed, difficulty)
+    else:
+        # Every round gets its own cube colour (never the same twice in a video), so each level feels like a new challenge.
+        pool = [color for color in CUBE_ROUND_COLORS if color not in clashing]
+        colors = random.Random(f"cube_colors_v1:{seed}:{difficulty}:{count}").sample(pool, min(count, len(pool)))
     rounds: list[RoundSpec] = []
     previous = None
-    for index in range(count):
-        item = _make_round(index, difficulty, level_tier(index, count), previous, colors[index % len(colors)], rng)
+    grids = 0
+    for index, mode in enumerate(modes):
+        color = colors[index % len(colors)]
+        if mode == "grid":
+            tier = level_tier(index, count) if not formats else (0 if grids == 0 else 2)
+            grids += 1
+            item = _make_round(index, difficulty, tier, previous, color, rng)
+            if formats:
+                item = RoundSpec(item.index, item.kind, {**item.data, "mode": "grid"}, item.answer)
+        elif mode == "sweep":
+            item = _sweep_round(index, difficulty, previous, color, rng)
+        else:
+            item = _rain_round(index, difficulty, previous, color, rng, clashing, mode == "rain_color")
         rounds.append(item)
         previous = item.answer
-    stable_id = sha256(f"cube_count_v1:{seed}:{difficulty}:{count}".encode()).hexdigest()[:12]
+    stable_id = sha256(f"cube_count_v1:{seed}:{difficulty}:{count}:{int(formats)}".encode()).hexdigest()[:12]
     return VideoSpec(f"PZ-{stable_id}", "cube_count", seed, difficulty, "isometric_cubes", tuple(rounds),
-                     PUZZLE_FIT_INTRO_DURATION, round_duration("cube_count", difficulty), PUZZLE_FIT_OUTRO_DURATION)
+                     READY_INTRO_DURATION, cube_average_round([item.data for item in rounds]), PUZZLE_FIT_OUTRO_DURATION)
+
+
+# ---------------------------------------------------------------- validation
+
+def _sweep_errors(data: dict, answer: int, difficulty: str) -> list[str]:
+    items = data.get("items", [])
+    towers = [item for item in items if item_width(item) == 1]
+    blocks = [item for item in items if item_width(item) == 2]
+    tallest = 4 if difficulty == "hard" else 3
+    if data.get("grid") != SWEEP_GRID or len(towers) != SWEEP_TOWERS[difficulty] or len(blocks) != 1 or blocks[0].get("height") != 1:
+        return ["a cube train is towers and exactly one big block"]
+    if any(item.get("height") not in range(1, tallest + 1) for item in towers):
+        return [f"cube towers must be 1-{tallest} cubes tall"]
+    if not _mixed_train([item["height"] for item in towers]):
+        return ["cube towers must be of mixed heights"]
+    total = sum(item["height"] for item in towers) + 1  # the big block counts as one
+    low, high = SWEEP_TOTALS[difficulty]
+    if data.get("total") != total or answer != total or not low <= total <= high:
+        return ["cube answer must equal the number of cubes"]
+    if not CUBE_SWEEP_RANGE[0] <= float(data.get("sweep_seconds", 0)) <= CUBE_SWEEP_RANGE[1]:
+        return ["cube train speed is out of range"]
+    if data.get("color_id") not in CUBE_COLORS or data.get("tier") != 1:
+        return ["cube level metadata is invalid"]
+    return []
+
+
+def _rain_errors(data: dict, answer: int, difficulty: str) -> list[str]:
+    mode = cube_mode(data)
+    drops = data.get("drops", [])
+    grid = data.get("grid")
+    fall = float(data.get("fall", 0))
+    if grid != GRID_BIG[difficulty] or not CUBE_FALL_RANGE[0] <= fall <= CUBE_FALL_RANGE[1]:
+        return ["cube rain board or fall time is invalid"]
+    if data.get("color_id") not in CUBE_COLORS or data.get("tier") != 1:
+        return ["cube level metadata is invalid"]
+    if not drops or [drop.get("size", 1) for drop in drops].count(2) != 1 or any(drop.get("size", 1) not in (1, 2) for drop in drops):
+        return ["a cube rain has exactly one big block"]
+    for index, drop in enumerate(drops):
+        span = grid - (1 if drop.get("size", 1) == 2 else 0)
+        if len(drop.get("cell", ())) != 2 or not all(isinstance(value, int) and 0 <= value < span for value in drop["cell"]):
+            return ["cube drops must land on the board"]
+        if index and drop["at"] - drops[index - 1]["at"] < CUBE_RAIN_MIN_GAP - 1e-6:
+            return ["cubes land too close together to be counted"]
+    if drops[0]["at"] != 0:
+        return ["cube rain must start at zero"]
+    for index, first in enumerate(drops):
+        for second in drops[index + 1:]:
+            if flight_window(second, fall)[0] < flight_window(first, fall)[1] and not apart_on_screen(first, second):
+                return ["cubes in the air together must not overlap"]
+    if abs(float(data.get("rain_seconds", 0)) - (drops[-1]["at"] + fall)) > 1e-3:
+        return ["cube rain length does not match its drops"]
+    if mode == "rain":
+        low, high = RAIN_TOTALS[difficulty]
+        if any(drop.get("color") != data["color_id"] for drop in drops) or data.get("total") != len(drops) or answer != len(drops):
+            return ["cube answer must equal the number of cubes"]
+        if not low <= len(drops) <= high:
+            return ["cube total is outside its level range"]
+        return []
+    if not CUBE_TARGET_RANGE[0] <= float(data.get("intro_seconds", -1)) <= CUBE_TARGET_RANGE[1]:
+        return ["a colour rain introduces its counted colour first"]
+    colors = data.get("colors", [])
+    if (len(colors) != 3 or colors[0] != data["color_id"] or data.get("target") != colors[0]
+            or any(color not in HUE_FAMILY for color in colors) or len({HUE_FAMILY.get(color) for color in colors}) != 3
+            or any(drop.get("color") not in colors for drop in drops)):
+        return ["a colour rain uses one counted colour and two others"]
+    counted = sum(1 for drop in drops if drop["color"] == data["color_id"])
+    low, high = COLOR_DROPS[difficulty]
+    target_low, target_high = COLOR_TARGETS[difficulty]
+    if data.get("total") != counted or answer != counted or not target_low <= counted <= target_high or not low <= len(drops) <= high:
+        return ["cube answer must equal the number of counted cubes"]
+    if min(sum(1 for drop in drops if drop["color"] == color) for color in colors) < 2:
+        return ["every colour of a colour rain falls at least twice"]
+    return []
 
 
 def errors(data: dict, answer: int, difficulty: str | None) -> list[str]:
     difficulty = difficulty or "easy"
+    mode = cube_mode(data)
+    if mode == "sweep":
+        return _sweep_errors(data, answer, difficulty)
+    if mode in ("rain", "rain_color"):
+        return _rain_errors(data, answer, difficulty)
+    if mode != "grid":
+        return ["unknown cube format"]
     grid = data.get("grid")
     expected = GRID_BIG if data.get("version") == CUBE_VERSION else GRID
     if difficulty not in GRID or grid != expected[difficulty]:

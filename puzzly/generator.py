@@ -16,7 +16,7 @@ from uuid import uuid4
 from .config import (BOUNCE_CTA_DURATION, DATA_DIR, HIDDEN_MOTION_DURATION,
                      INTRO_DURATION, LUCKY_INTRO_DURATION, OUTRO_DURATION,
                      PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION,
-                     OUTPUT_DIR, ensure_directories)
+                     OUTPUT_DIR, ensure_directories, fresh_theme_for)
 from .history import GenerationRecord, HistoryStore
 from .metadata import write_manifest, youtube_metadata
 from .models import RoundSpec, VideoSpec
@@ -40,6 +40,12 @@ THEMES = {
     "hidden_motion_hunt": ("uploaded_background",),
     "bounce_arena": ("bounce_arena",),
     "cube_count": ("isometric_cubes",),
+    "chess_mate": ("lichess",),
+    "matchstick": ("matchsticks",),
+    "cup_shuffle": ("cups",),
+    "shade_spot": ("shades",),
+    "mind_mix": ("mix",),
+    "laser_maze": ("lasers",),
 }
 
 
@@ -54,12 +60,17 @@ def generate_spec(
     puzzle_type: str, seed: int, difficulty: str = "easy", theme: str = "auto",
     operation: str = "mixed", challenges: int | None = None, background_bytes: bytes | None = None,
     placement_mode: str = "auto", manual_objects: list[dict] | None = None,
-    background: str | None = None, palette: str | None = None,
+    background: str | None = None, palette: str | None = None, min_rating: int | None = None,
+    maze_shape: str | None = None,
 ) -> VideoSpec:
     """`background` (a DARK_THEMES tone) and `palette` (an object palette) are the creator's colour choices; they are
-    stored in the spec's metadata, outside the fingerprint (see puzzly.palette). None keeps the defaults."""
+    stored in the spec's metadata, outside the fingerprint (see puzzly.palette). None keeps the defaults.
+    `min_rating` (Chess: Mate in 1 only) draws from every puzzle rated at least that instead of the difficulty band.
+    `maze_shape` (Find the Exit Hard only): `rect` (default), `circle`, or `mixed`."""
+    if puzzle_type != "hidden_motion_hunt" and background in (None, "random"):
+        background = fresh_theme_for(puzzle_type, seed)  # stored below, so this video keeps its tone whatever the pool becomes
     spec = _generate_spec(puzzle_type, seed, difficulty, theme, operation, challenges, background_bytes,
-                          placement_mode, manual_objects, background)
+                          placement_mode, manual_objects, background, min_rating, maze_shape)
     colours = {key: value for key, value in (("background", background), ("palette", palette))
                if value and value not in ("random", "classic")}
     return replace(spec, metadata={**spec.metadata, **colours}) if colours else spec
@@ -68,6 +79,7 @@ def generate_spec(
 def _generate_spec(
     puzzle_type: str, seed: int, difficulty: str, theme: str, operation: str, challenges: int | None,
     background_bytes: bytes | None, placement_mode: str, manual_objects: list[dict] | None, background: str | None,
+    min_rating: int | None = None, maze_shape: str | None = None,
 ) -> VideoSpec:
     if puzzle_type not in SUPPORTED_PUZZLE_TYPES:
         raise ValueError(f"unsupported puzzle type: {puzzle_type}")
@@ -98,6 +110,26 @@ def _generate_spec(
         spec = lucky_pick.generate(seed)
     elif puzzle_type == "bounce_arena":
         spec = bounce_arena.generate(seed)
+    elif puzzle_type == "cup_shuffle":
+        from .puzzles import cup_shuffle
+        spec = cup_shuffle.generate(seed, difficulty)  # always Hard, always 3 levels
+    elif puzzle_type == "laser_maze":
+        from .puzzles import laser_maze
+        spec = laser_maze.generate(seed, difficulty, round_count=challenges)  # always Hard, 3-5 levels
+    elif puzzle_type == "mind_mix":
+        from .puzzles import mind_mix
+        spec = mind_mix.generate(seed)  # always Hard: one hard level of Memory, Shade Spot and Puzzle Fit
+    elif puzzle_type == "shade_spot":
+        from .puzzles import shade_spot
+        spec = shade_spot.generate(seed, difficulty, round_count=challenges)  # always Hard, 3-5 levels
+    elif puzzle_type == "matchstick":
+        from .puzzles import matchstick
+        spec = matchstick.generate(seed, difficulty)
+    elif puzzle_type == "chess_mate":
+        from .puzzles import chess_mate
+        spec = chess_mate.generate(seed, difficulty, min_rating)
+    elif puzzle_type == "find_the_exit" and difficulty == "hard":  # rectangles, circles, or both
+        spec = find_the_exit.generate(seed, difficulty, chosen_theme, challenges, shape=maze_shape or "rect")
     elif puzzle_type == "cube_count":  # its cube colours avoid the video's background tone
         spec = cube_count.generate(seed, difficulty, chosen_theme, challenges,
                                    background=background if background not in (None, "random") else None)
@@ -127,7 +159,8 @@ def generate_unique_specs(
     base_seed: int | None = None, history: HistoryStore | None = None, retry_limit: int = 100,
     operation: str = "mixed", challenges: int | None = None, background_bytes: bytes | None = None,
     placement_mode: str = "auto", manual_objects: list[dict] | None = None,
-    background: str | None = None, palette: str | None = None,
+    background: str | None = None, palette: str | None = None, min_rating: int | None = None,
+    maze_shape: str | None = None,
 ) -> list[VideoSpec]:
     if count < 1:
         raise ValueError("count must be positive")
@@ -143,7 +176,7 @@ def generate_unique_specs(
         for attempt in range(retry_limit):
             seed = rng.randrange(0, 2**31)
             spec = generate_spec(selected_type, seed, difficulty, theme, operation, challenges, background_bytes,
-                                 placement_mode, manual_objects, background, palette)
+                                 placement_mode, manual_objects, background, palette, min_rating, maze_shape)
             fingerprint = spec.fingerprint()
             if fingerprint not in existing and fingerprint not in selected:
                 specs.append(spec)
@@ -159,7 +192,9 @@ def _manifest_row(
 ) -> dict[str, Any]:
     meta = youtube_metadata(spec)
     memory_data = spec.rounds[0].data if spec.puzzle_type == "memory_challenge" else {}
-    memory_tokens = memory_data.get("tokens", [])
+    memory_levels = memory_data.get("layout") == "levels_v8"  # three levels: every level's tokens and questions are recorded
+    memory_tokens = ([token for item in spec.rounds for token in item.data["tokens"]] if memory_levels
+                     else memory_data.get("tokens", []))
     lucky_data = spec.rounds[0].data if spec.puzzle_type == "lucky_pick" else {}
     hidden_data = spec.rounds[0].data if spec.puzzle_type == "hidden_motion_hunt" else {}
     bounce_data = spec.rounds[0].data if spec.puzzle_type == "bounce_arena" else {}
@@ -175,7 +210,8 @@ def _manifest_row(
         "token_shapes": json.dumps([token.get("shape") for token in memory_tokens], ensure_ascii=False),
         "color_ids": json.dumps([token.get("color_id") for token in memory_tokens], ensure_ascii=False),
         "token_positions": json.dumps([token.get("position") for token in memory_tokens], ensure_ascii=False),
-        "question_order": json.dumps(memory_data.get("question_order", []), ensure_ascii=False),
+        "question_order": json.dumps([item.data["questions"] for item in spec.rounds] if memory_levels
+                                     else memory_data.get("question_order", []), ensure_ascii=False),
         "final_auto_reveal": memory_data.get("final_position", ""),
         "shape_id": lucky_data.get("shape_id", ""),
         "color_id": "",
@@ -391,21 +427,28 @@ def _spec_from_manifest(record: GenerationRecord, output_root: Path) -> VideoSpe
             rounds = tuple(RoundSpec(index, puzzle_type, data, answers[index])
                            for index, data in enumerate(round_data))
             total = float(row["duration_seconds"])
-            if puzzle_type == "hidden_motion_hunt":
+            before_long_end_card = str(row.get("created_at", ""))[:10] < "2026-09-30"  # the end card grew from 1.6 s to 3.6 s
+            end_card = 1.6 if before_long_end_card else PUZZLE_FIT_OUTRO_DURATION
+            from .config import READY_GAMES, READY_INTRO_DURATION
+            if puzzle_type in ("hidden_motion_hunt", "chess_mate"):
                 intro, outro = 0.0, 0.0
             elif puzzle_type == "bounce_arena":
-                intro, outro = 0.0, BOUNCE_CTA_DURATION
+                intro, outro = 0.0, 1.7 if before_long_end_card else BOUNCE_CTA_DURATION
             elif puzzle_type == "lucky_pick" and not (round_data and round_data[0].get("map_version")):
                 intro, outro = LUCKY_INTRO_DURATION, OUTRO_DURATION  # older corridor-template videos
-            elif puzzle_type == "line_follow" and round_data and round_data[0].get("version") == "weave_v7":
-                intro, outro = PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION
+            elif puzzle_type == "line_follow" and round_data and round_data[0].get("version") in ("weave_v7", "weave_v8"):
+                intro, outro = PUZZLE_FIT_INTRO_DURATION, end_card
             elif puzzle_type == "flash_count" and round_data and round_data[0].get("format"):
                 from .config import FLASH_INTRO
-                intro, outro = FLASH_INTRO, PUZZLE_FIT_OUTRO_DURATION
-            elif puzzle_type in ("puzzle_fit", "cube_count", "flash_count", "memory_challenge", "lucky_pick") or (
+                intro, outro = (2.0 if before_long_end_card else FLASH_INTRO), end_card
+            elif puzzle_type == "shade_spot" and str(row.get("created_at", ""))[:10] < "2026-10-02":
+                intro, outro = PUZZLE_FIT_INTRO_DURATION, end_card  # made before its READY screen
+            elif puzzle_type in READY_GAMES and not before_long_end_card:
+                intro, outro = READY_INTRO_DURATION, end_card
+            elif puzzle_type in ("puzzle_fit", "cube_count", "flash_count", "memory_challenge", "lucky_pick", "matchstick", "cup_shuffle", "shade_spot", "laser_maze") or (
                     puzzle_type == "quick_math" and round_data and round_data[0].get("format")) or (puzzle_type == "find_the_exit"
-                                                   and round_data and round_data[0].get("layout") == "deceptive_v2"):
-                intro, outro = PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION
+                                                   and round_data and round_data[0].get("layout") in ("deceptive_v2", "polar_v1", "cells_v1")):
+                intro, outro = PUZZLE_FIT_INTRO_DURATION, end_card
             else:
                 intro, outro = INTRO_DURATION, OUTRO_DURATION
             round_duration_value = (total - intro - outro) / max(1, len(rounds))

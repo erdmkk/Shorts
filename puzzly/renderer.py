@@ -40,7 +40,7 @@ LOGGER = logging.getLogger(__name__)
 @lru_cache(maxsize=24)
 def _tutorial_round(kind: str, seed: int, excluded: tuple[str, ...]) -> RoundSpec:
     from .puzzles import puzzle_fit, find_the_exit, line_follow
-    factory = {"puzzle_fit": puzzle_fit.generate, "find_the_exit": find_the_exit.generate,
+    factory = {"puzzle_fit": puzzle_fit.legacy_generate, "find_the_exit": find_the_exit.generate,
                "line_follow": line_follow.generate_legacy}[kind]  # only the earlier light-theme look uses tutorials
     for offset in range(100):
         for item in factory(-seed - 9000 - offset, "easy", round_count=3).rounds:
@@ -203,6 +203,24 @@ def render_frame(spec: VideoSpec, t: float, size: tuple[int, int], background: I
         return draw_quick_math_frame(spec, t, size)
     if spec.puzzle_type == "bounce_arena":
         return draw_bounce_frame(spec, t, size)
+    if spec.puzzle_type == "cup_shuffle":
+        from .visuals.cup_shuffle import draw_cup_frame
+        return draw_cup_frame(spec, t, size)
+    if spec.puzzle_type == "matchstick":
+        from .visuals.matchstick import draw_matchstick_frame
+        return draw_matchstick_frame(spec, t, size)
+    if spec.puzzle_type == "shade_spot":
+        from .visuals.shade_spot import draw_shade_frame
+        return draw_shade_frame(spec, t, size)
+    if spec.puzzle_type == "laser_maze":
+        from .visuals.laser_maze import draw_laser_frame
+        return draw_laser_frame(spec, t, size)
+    if spec.puzzle_type == "mind_mix":
+        from .visuals.mind_mix import draw_mix_frame
+        return draw_mix_frame(spec, t, size)
+    if spec.puzzle_type == "chess_mate":
+        from .visuals.chess_mate import draw_chess_frame
+        return draw_chess_frame(spec, t, size)
     if t < spec.intro_duration:
         base = background or create_background(size, _palette(spec), 0 if spec.puzzle_type == "lucky_pick" else spec.seed % 3)
         return _intro_frame(spec, t, size, base)

@@ -23,7 +23,8 @@ SHAPE_LAYOUT = {
     "hexagon": (0.94, 0.000, 0.000), "heart": (0.95, 0.000, 0.018),
     "diamond": (0.93, 0.000, 0.000), "pentagon": (0.95, 0.000, 0.012),
     "cross": (0.90, 0.000, 0.000), "moon": (0.94, 0.020, 0.000),
-}
+    "ring": (0.94, 0.000, 0.000), "semicircle": (0.96, 0.000, 0.000), "parallelogram": (0.95, 0.000, 0.000),
+}  # ring, semicircle and parallelogram: the plain shapes of the three-level Memory Challenge
 
 
 def _scaled(value: float, size: tuple[int, int]) -> int:
@@ -76,6 +77,14 @@ def _raw_shape_mask(shape: str, size: int) -> Image.Image:
     elif shape == "moon":
         draw.ellipse((p, p, q, q), fill=255)
         draw.ellipse((p + size * .30, p - size * .06, q + size * .22, q - size * .20), fill=0)
+    elif shape == "ring":
+        draw.ellipse((p, p, q, q), fill=255)
+        hole = size * .245
+        draw.ellipse((c - hole, c - hole, c + hole, c + hole), fill=0)
+    elif shape == "semicircle":
+        draw.pieslice((p, p, q, q), 180, 360, fill=255)
+    elif shape == "parallelogram":
+        draw.polygon([(size * .30, size * .24), (size * .92, size * .24), (size * .70, size * .76), (size * .08, size * .76)], fill=255)
     else: raise ValueError(f"unsupported memory shape: {shape}")
     return mask
 
@@ -369,7 +378,8 @@ def draw_memory_intro(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image
             _place(image, _face_card(shape, color, card_size, round(scale, 4)), center, scale, zoom=zoom)
         else:
             _place(image, _cover_card(position, card_size, round(scale, 4), False), center, scale, zoom=zoom)
-    fade = 1 - _clamp01((t - (spec.intro_duration - .22)) / .22)
+    from .ready import hook_end
+    fade = 1 - _clamp01((t - (hook_end(spec) - .22)) / .22)
     slam = 1 + .35 * (1 - ease_out_cubic(_clamp01(t / .18)))
     hook = "REMEMBER ALL 9."
     _text(image, (540 * scale, 150 * scale), hook, fitted_font(hook, round(940 * scale), round(84 * scale)),
@@ -381,7 +391,13 @@ def draw_memory_intro(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image
 
 
 def draw_memory_frame(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image.Image:
+    if spec.rounds[0].data.get("layout") == "levels_v8":
+        from .memory_levels import draw_levels_frame
+        return draw_levels_frame(spec, t, size)
     if t < spec.intro_duration:
+        from .ready import HOOK_SECONDS, draw_ready_screen, has_ready
+        if has_ready(spec) and t >= HOOK_SECONDS:
+            return draw_ready_screen(spec, t - HOOK_SECONDS, size)
         return draw_memory_intro(spec, t, size)
     end = spec.intro_duration + spec.round_duration
     if t >= end:

@@ -21,7 +21,7 @@ import math
 import random
 from typing import Any
 
-from ..config import DEFAULT_ROUNDS, LINE_THINKING, PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION, line_round
+from ..config import DEFAULT_ROUNDS, LINE_THINKING_V7 as LINE_THINKING, PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION, line_round
 from ..models import RoundSpec, VideoSpec
 
 VERSION = "tangle_v4"

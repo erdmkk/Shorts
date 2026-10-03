@@ -93,6 +93,42 @@ STYLES = {
                      "lead": "synth", "lead_amp": .015,  # energetic: octave-jumping synth riff
                      "motif": (((0, 0, .5), (.5, 3, .5), (1, 2, .5), (1.5, 3, .5), (2, 4, .5), (3, 3, .5), (3.5, 2, .5)),
                                ((0, 5, .5), (1, 4, .5), (1.5, 3, .5), (2, 2, 1), (3.5, 1, .5)))},
+    "matchstick": {"mood": "tense", "bpm": 92, "keys": ("E minor", "A minor"), "progression": DRIVE_PROGRESSION,
+                   "pad": .010, "rolloff": 1.7, "bass": "root", "bass_amp": (.028, .036, .046), "bass_decay": 7.5,
+                   "hat_amp": (.006, .009), "hat_div": 2, "arp_amp": .016, "arp_decay": 11.0,
+                   "lead": "kalimba", "lead_amp": .017,  # crafty: woody kalimba taps, like matches on a table
+                   "motif": (((0, 1, .5), (.5, 2, .5), (1, 1, .5), (2, 3, .5), (2.5, 2, .5), (3, 0, 1)),
+                             ((0, 2, .5), (.5, 3, .5), (1, 4, 1), (2, 3, .5), (2.5, 1, 1.5)))},
+    "cup_shuffle": {"mood": "tense", "bpm": 100, "keys": ("D minor", "E minor"), "progression": WINDING_PROGRESSION,
+                    "pad": .010, "rolloff": 1.7, "bass": "root", "bass_amp": (.026, .034, .044), "bass_decay": 6.0,
+                    "hat_amp": (.006, .009), "hat_div": 2, "arp_amp": .016, "arp_decay": 9.0,
+                    "lead": "pizz", "lead_amp": .019,  # sneaky: staccato pizzicato, like a hand darting between cups
+                    "motif": (((0, 2, .25), (.5, 3, .25), (1, 2, .25), (1.5, 4, .25), (2, 3, .5), (3, 1, .5), (3.5, 2, .5)),
+                              ((0, 4, .5), (.75, 3, .25), (1, 2, .5), (2, 3, .25), (2.5, 1, .25), (3, 0, 1)))},
+    "shade_spot": {"mood": "tense", "bpm": 94, "keys": ("A minor", "C minor"), "progression": FOCUS_PROGRESSION,
+                   "pad": .011, "rolloff": 1.6, "bass": "root", "bass_amp": (.026, .034, .044), "bass_decay": 6.5,
+                   "hat_amp": (.005, .008), "hat_div": 2, "arp_amp": .017, "arp_decay": 9.0,
+                   "lead": "celesta", "lead_amp": .017,  # keen: bright celesta twinkles, like an eye hunting for a tiny change
+                   "motif": (((0, 2, .5), (.5, 4, .5), (1, 2, .5), (1.5, 3, .5), (2, 4, 1), (3, 2, 1)),
+                             ((0, 5, .5), (.5, 4, .5), (1, 3, .5), (2, 4, .5), (2.5, 2, 1.5)))},
+    "mind_mix": {"mood": "tense", "bpm": 98, "keys": ("E minor", "A minor"), "progression": DRIVE_PROGRESSION,
+                 "pad": .010, "rolloff": 1.7, "bass": "root", "bass_amp": (.027, .035, .045), "bass_decay": 7.0,
+                 "hat_amp": (.006, .009), "hat_div": 2, "arp_amp": .017, "arp_decay": 9.5,
+                 "lead": "rhodes", "lead_amp": .017,  # three games in a row: a warm electric-piano line that keeps moving
+                 "motif": (((0, 2, .5), (.5, 3, .5), (1, 4, 1), (2, 3, .5), (2.5, 2, .5), (3, 0, 1)),
+                           ((0, 4, .5), (.5, 3, .5), (1, 2, .5), (1.5, 1, .5), (2, 0, 2)))},
+    "laser_maze": {"mood": "tense", "bpm": 106, "keys": ("A minor", "E minor"), "progression": PROGRESSION,
+                   "pad": .010, "rolloff": 1.7, "bass": "root", "bass_amp": (.028, .036, .046), "bass_decay": 7.0,
+                   "hat_amp": (.006, .009), "hat_div": 2, "arp_amp": .017, "arp_decay": 10.0,
+                   "lead": "zap", "lead_amp": .017,  # sci-fi: a bright, slightly bent synth blip, like a laser skipping off mirrors
+                   "motif": (((0, 2, .25), (.5, 4, .25), (1, 3, .25), (1.5, 5, .25), (2, 4, .5), (3, 2, .5), (3.5, 3, .5)),
+                             ((0, 5, .5), (.75, 4, .25), (1, 3, .5), (2, 4, .25), (2.5, 2, .25), (3, 0, 1)))},
+    "chess_mate": {"mood": "tense", "bpm": 78, "keys": ("D minor", "A minor"), "progression": MEMORY_PROGRESSION,
+                   "pad": .012, "rolloff": 1.5, "bass": "root", "bass_amp": (.022, .028, .036), "bass_decay": 4.5,
+                   "hat_amp": (.003, .005), "hat_div": 2, "arp_amp": .014, "arp_decay": 5.0,
+                   "lead": "piano", "lead_amp": .015,  # thoughtful: slow, sparse piano phrases for a calm stare at the board
+                   "motif": (((0, 0, 1), (1, 2, 1), (2, 1, .5), (2.5, 3, 1.5)),
+                             ((0, 4, 1.5), (1.5, 3, .5), (2, 2, 2)))},
 }
 
 
@@ -187,6 +223,24 @@ def _lead_note(voice: str, midi: float, seconds: float, amplitude: float) -> np.
     elif voice == "vibes":  # vibraphone: pure bar tone with a gentle motor tremolo
         wave = (np.sin(tau) + .25 * np.sin(4 * tau) * np.exp(-t * 12)) * (1 + .18 * np.sin(2 * np.pi * 5.5 * t))
         envelope = np.exp(-t * 3.6) * np.minimum(t / .003, 1.0)
+    elif voice == "piano":  # soft piano: a warm fundamental and upper partials that die away quickly
+        wave = sum(np.sin(n * tau * (1 + .0004 * n * n)) * np.exp(-t * 1.6 * n) / n ** 1.5 for n in range(1, 7))
+        envelope = np.exp(-t * 2.2) * np.minimum(t / .004, 1.0)
+    elif voice == "celesta":  # celesta: a pure, bright tine with a quick glittering overtone
+        wave = np.sin(tau) + .35 * np.sin(2 * tau) * np.exp(-t * 6) + .22 * np.sin(4 * tau) * np.exp(-t * 11)
+        envelope = np.exp(-t * 4.4) * np.minimum(t / .002, 1.0)
+    elif voice == "rhodes":  # electric piano: a soft bell-like attack over a warm body with a slow tremolo
+        wave = (np.sin(tau) + .38 * np.sin(2 * tau) * np.exp(-t * 4) + .16 * np.sin(5.01 * tau) * np.exp(-t * 18)) * (1 + .06 * np.sin(2 * np.pi * 5 * t))
+        envelope = np.exp(-t * 3.4) * np.minimum(t / .004, 1.0)
+    elif voice == "kalimba":  # thumb piano: a woody tine with a short, slightly out-of-tune overtone
+        wave = np.sin(tau) + .4 * np.sin(3.1 * tau) * np.exp(-t * 14) + .15 * np.sin(5.9 * tau) * np.exp(-t * 26)
+        envelope = np.exp(-t * 5) * np.minimum(t / .002, 1.0)
+    elif voice == "pizz":  # pizzicato: a plucked string whose upper partials die away almost at once
+        wave = sum(np.sin(n * tau) * np.exp(-t * (7 + 5 * n)) / n ** 1.3 for n in range(1, 5))
+        envelope = np.exp(-t * 9) * np.minimum(t / .002, 1.0)
+    elif voice == "zap":  # a pure blip whose pitch starts bent and settles at once, like a laser
+        wave = np.sin(tau + 1.4 * np.exp(-t * 28) * np.sin(2 * tau)) + .2 * np.sin(2 * tau) * np.exp(-t * 9)
+        envelope = np.exp(-t * 6) * np.minimum(t / .003, 1.0)
     elif voice == "synth":  # soft saw-like pluck
         wave = sum(np.sin(n * tau) / n ** 1.3 for n in range(1, 5))
         envelope = np.exp(-t * 6) * np.minimum(t / .006, 1.0)
@@ -214,6 +268,11 @@ def _windows(spec: VideoSpec) -> list[dict[str, float | None]]:
         return [{"think_start": start + .5, "think_end": start + phases(item)["think_end"], "answer": start + phases(item)["answer"]}
                 for item, (start, _) in zip(spec.rounds, schedule(spec))]
     starts = [spec.intro_duration + index * spec.round_duration for index in range(spec.round_count)]
+    if kind == "puzzle_fit" and spec.rounds and spec.rounds[0].data.get("version") == "fit_v12":
+        from .visuals.puzzle_fit_v12 import phases as fit_phases
+        times = fit_phases(spec.rounds[0])
+        return [{"think_start": spec.intro_duration + .5, "think_end": spec.intro_duration + times["think_end"],
+                 "answer": spec.intro_duration + times["shine"]}]
     if kind == "puzzle_fit":
         from .puzzles.puzzle_fit import phase_times
         times = phase_times(spec.difficulty)
@@ -239,9 +298,24 @@ def _windows(spec: VideoSpec) -> list[dict[str, float | None]]:
         return [{"think_start": s + flash_phases(item.data)["flash_end"], "think_end": s + flash_phases(item.data)["think_end"],
                  "answer": s + flash_phases(item.data)["reveal_end"]} for item, s in zip(spec.rounds, starts)]
     if kind == "cube_count":
-        from .visuals.cube_count import phases
-        times = phases(spec)
-        return [{"think_start": s + times["hide_end"], "think_end": s + times["think_end"], "answer": s + times["count_end"]} for s in starts]
+        from .visuals.cube_count import phases, schedule
+        windows = []
+        for item, (start, _) in zip(spec.rounds, schedule(spec)):  # the formats last different times
+            times = phases(item)
+            windows.append({"think_start": start + times["hide_end"], "think_end": start + times["think_end"], "answer": start + times["count_end"]})
+        return windows
+    if kind == "mind_mix":
+        from .visuals.mind_mix import music_windows
+        return music_windows(spec)
+    if kind == "memory_challenge" and spec.rounds[0].data.get("layout") == "levels_v8":
+        from .config import MEMORY_V8_ENTRANCE
+        from .visuals.memory_levels import phases as memory_phases, question_times, schedule as memory_schedule
+        windows = []
+        for item, (start, _) in zip(spec.rounds, memory_schedule(spec)):  # bigger boards last longer
+            windows.append({"think_start": start + MEMORY_V8_ENTRANCE, "think_end": start + memory_phases(item)["memorize_end"], "answer": None})
+            windows += [{"think_start": start + window["think_start"], "think_end": start + window["think_end"], "answer": start + window["answer"]}
+                        for window in question_times(item)]
+        return windows
     if kind == "memory_challenge":
         from .config import MEMORY_ANSWER_HIGHLIGHT, MEMORY_QUESTION_DURATION, MEMORY_TARGET_ENTRANCE, MEMORY_THINKING_DURATION
         from .visuals.memory import grid_phases
@@ -258,6 +332,24 @@ def _windows(spec: VideoSpec) -> list[dict[str, float | None]]:
         start = spec.intro_duration
         return [{"think_start": start + LUCKY_APPEARANCE_DURATION, "think_end": start + LUCKY_APPEARANCE_DURATION + LUCKY_SELECTION_DURATION,
                  "answer": start + float(spec.rounds[0].data["timeline_duration"]) - LUCKY_WINNER_HOLD}]
+    if kind == "shade_spot":
+        from .visuals.shade_spot import phases as shade_phases, schedule as shade_schedule
+        return [{"think_start": start + .5, "think_end": start + shade_phases(item)["think_end"], "answer": start + shade_phases(item)["answer"]}
+                for item, (start, _) in zip(spec.rounds, shade_schedule(spec))]
+    if kind == "laser_maze":  # the beam's run is the answer moment
+        from .visuals.laser_maze import phases as laser_phases, schedule as laser_schedule
+        return [{"think_start": start + .5, "think_end": start + laser_phases(item)["think_end"], "answer": start + laser_phases(item)["trace_end"]}
+                for item, (start, _) in zip(spec.rounds, laser_schedule(spec))]
+    if kind == "cup_shuffle":  # tension builds through the shuffle and the guess
+        from .visuals.cup_shuffle import phases as cup_phases, schedule as cup_schedule
+        return [{"think_start": start + cup_phases(item)["shuffle_start"], "think_end": start + cup_phases(item)["think_end"],
+                 "answer": start + cup_phases(item)["reveal_end"]} for item, (start, _) in zip(spec.rounds, cup_schedule(spec))]
+    if kind == "matchstick":
+        from .visuals.matchstick import phases as match_phases, schedule as match_schedule
+        return [{"think_start": start + .5, "think_end": start + match_phases(item)["think_end"],
+                 "answer": start + match_phases(item)["answer"]} for item, (start, _) in zip(spec.rounds, match_schedule(spec))]
+    if kind == "chess_mate":  # the whole video is thinking time; the answer never comes
+        return [{"think_start": 0.0, "think_end": spec.total_duration, "answer": None}]
     if kind == "bounce_arena":
         from .config import BOUNCE_SELECTION_DURATION
         return [{"think_start": 0.0, "think_end": BOUNCE_SELECTION_DURATION,

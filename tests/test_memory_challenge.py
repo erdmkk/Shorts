@@ -5,12 +5,17 @@ import pytest
 
 from puzzly.config import (DEFAULT_ROUNDS, MEMORY_GRID_QUESTIONS, MEMORY_GRID_TOKENS, MEMORY_MEMORIZE,
                            MEMORY_QUESTION_DURATION, MEMORY_THINKING_DURATION, PUZZLE_FIT_INTRO_DURATION,
-                           PUZZLE_FIT_OUTRO_DURATION, round_duration)
+                           PUZZLE_FIT_OUTRO_DURATION, memory_round_duration)
 from puzzly.memory_colors import GRID_COLOR_LEVELS, GRID_COLOR_RULES, GRID_COLORS, GRID_MIN_LIGHTNESS, distance_stats
 from puzzly.models import RoundSpec
-from puzzly.puzzles.memory_challenge import MEMORY_SHAPES, errors, generate
+from puzzly.puzzles.memory_challenge import MEMORY_SHAPES, errors, generate as generate_current
 from puzzly.validation import validate_spec
 from puzzly.visuals.memory import grid_center, grid_phases, memory_state, shape_mask, token_image, token_layout
+
+
+def generate(*args, **kwargs):
+    """The earlier single 3x3 board (the three-level game is tested in test_memory_levels.py)."""
+    return generate_current(*args, classic=True, **kwargs)
 
 
 @pytest.mark.parametrize("difficulty,video_count", [("easy", 500), ("medium", 500), ("hard", 700)])
@@ -19,8 +24,8 @@ def test_grid_boards_are_valid_deterministic_and_follow_color_rules(difficulty: 
         level = GRID_COLOR_LEVELS[seed % len(GRID_COLOR_LEVELS)]
         spec = generate(100_000 + seed, difficulty, f"colors_{level}")
         validate_spec(spec)
-        assert spec.round_count == 1 and spec.intro_duration == PUZZLE_FIT_INTRO_DURATION
-        assert spec.total_duration == pytest.approx(PUZZLE_FIT_INTRO_DURATION + round_duration("memory_challenge", difficulty)
+        assert spec.round_count == 1 and spec.intro_duration == PUZZLE_FIT_INTRO_DURATION + 3.0  # hook + READY screen
+        assert spec.total_duration == pytest.approx(spec.intro_duration + memory_round_duration(difficulty)
                                                     + PUZZLE_FIT_OUTRO_DURATION)
         board = spec.rounds[0]
         tokens = board.data["tokens"]

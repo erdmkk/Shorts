@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from puzzly.config import round_duration, thinking_duration
-from puzzly.puzzles.puzzle_fit import CARD_BOUNDS, HARD_CARD_BOUNDS, generate, visual_state
+from puzzly.puzzles.puzzle_fit import CARD_BOUNDS, HARD_CARD_BOUNDS, legacy_generate as generate, visual_state  # V10 rules
 from puzzly.validation import validation_errors
 
 

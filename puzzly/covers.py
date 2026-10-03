@@ -12,7 +12,7 @@ import random
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
-from .config import DARK_THEMES, PUZZLE_FIT_PALETTE, dark_theme_for
+from .config import DARK_THEMES, PUZZLE_FIT_PALETTE, dark_theme_for, glow_strength
 from .models import VideoSpec
 from .visuals.text import WINDOWS_FONTS, strong_font
 
@@ -27,12 +27,17 @@ SHAPE_COLORS = {"triangle": "#FFD23F", "square": "#3DA9FF", "circle": "#FF4D6D",
 CROPS = {
     "puzzle_fit": (60, 300, 1020, 1440),
     "find_the_exit": (90, 270, 990, 1520),
+    "find_the_exit_circle": (24, 390, 1056, 1422),  # the round plate of a circular maze, portals included
     "cube_count": (100, 560, 980, 1380),
     "flash_count": (40, 670, 1040, 1050),
     "line_follow": (40, 272, 1040, 1790),
     "memory_challenge": (110, 320, 970, 1190),
     "lucky_pick": (50, 310, 1030, 1620),
     "bounce_arena": (90, 450, 990, 1400),
+    "cup_shuffle": (50, 590, 1030, 1310),  # the felt mat with the cups and the ball
+    "laser_maze": (44, 480, 1036, 1480),  # the card with the board, the emitter and the numbered receivers
+    "memory_levels": (80, 365, 1000, 1285),  # the hook's 3x3 concept board of the three-level Memory Challenge
+    "shade_spot": (200, 392, 880, 1592),  # both grids with their column letters and row numbers
 }
 
 
@@ -72,7 +77,8 @@ def background(theme: str, accent: str) -> Image.Image:
     y, x = np.mgrid[0:H, 0:W].astype(np.float32)
     t = (y / (H - 1))[..., None]
     img = np.array(top, np.float32) * (1 - t) + np.array(bottom, np.float32) * t
-    for gx, gy, radius, color, strength in ((540, 560, 700, glow, .55), (540, 1150, 620, mix(glow, (0, 0, 0), .35), .35),
+    for gx, gy, radius, color, strength in ((540, 560, 700, glow, glow_strength(theme, .55)),
+                                            (540, 1150, 620, mix(glow, (0, 0, 0), .35), glow_strength(theme, .35)),
                                             (980, 260, 380, rgb(accent), .12), (120, 1650, 420, rgb(accent), .14)):
         d = np.hypot(x - S(gx), y - S(gy)) / S(radius)
         img += (np.array(color, np.float32) - img) * (np.exp(-d * d) * strength)[..., None]
@@ -174,6 +180,20 @@ def cube3d(color: str, size: float) -> Image.Image:
     for poly in (top, left, right):
         draw.line(poly + [poly[0]], fill=edge, width=S(3), joint="curve")
     return image
+
+
+def piece3d(kind: str, white: bool, size: float) -> Image.Image:
+    """A chess piece standing out of the cover: the game's own piece sprite on an extruded slab of its silhouette."""
+    from .visuals.chess_mate import piece_sprite
+    px = S(size)
+    top = piece_sprite(kind, white, px)
+    mask = top.getchannel("A").point(lambda v: 255 if v > 110 else 0)
+    front, back = ("#B9B2A4", "#5E584E") if white else ("#15141A", "#050407")
+    side = extrude(mask, max(4, px // 10), front, back)
+    out = Image.new("RGBA", side.size, (0, 0, 0, 0))
+    out.alpha_composite(side)
+    out.alpha_composite(top, (0, 0))
+    return out
 
 
 def ball3d(color: str, size: float) -> Image.Image:
@@ -638,11 +658,22 @@ def _template(spec: VideoSpec) -> dict:
         return {"title": ("QUICK", "MATH"), "subtitle": "SOLVE THE SHAPES.", "cta": "NO CALCULATOR.",
                 "line": f"{spec.round_count} LEVELS  ·  THE LAST ONE HAS A TRAP", "content": shape_board(first),
                 "floaters": (tokens * 3)[:6]}
+    if kind == "puzzle_fit" and first.get("version") == "fit_v12":  # the picture with its holes, tilted options below
+        from .visuals.puzzle_fit_v12 import fit_cover_card
+        return {"title": ("PUZZLE", "FIT"), "subtitle": "3 PIECES ARE MISSING.", "cta": "FIND THE MISSING PIECES",
+                "line": "3 PIECES  ·  6 CHOICES", "content": fit_cover_card(spec, SS),
+                "floaters": [tile3d(str(number), 104, color, "#FFFFFF") for number, color in
+                             zip((1, 2, 3, 4, 5, 6), ("#7C5CFF", "#FF5F6D", "#2EE6C5", "#FFC371", "#7C5CFF", "#FF5F6D"))]}
     if kind == "puzzle_fit":
         return {"title": ("PUZZLE", "FIT"), "subtitle": "ONLY ONE FITS.", "cta": "CAN YOU FIND IT?", "line": levels,
                 "content": frame_crop(spec, .6, CROPS[kind]),
                 "floaters": [tile3d("?", 104, color, "#FFFFFF") for color in ("#7C5CFF", "#FF5F6D", "#2EE6C5", "#FFC371", "#7C5CFF", "#FF5F6D")]}
     # Covers never state a time: thinking and viewing times differ by level and difficulty.
+    if kind == "find_the_exit" and first.get("layout") in ("polar_v1", "cells_v1"):  # a circular or shaped maze: the real level-1 plate from the frame
+        return {"title": ("FIND THE", "EXIT"), "subtitle": f"{len(first['exits'])} EXITS.  1 WAY OUT.", "cta": "CAN YOU ESCAPE?",
+                "line": f"{spec.round_count} MAZES  ·  EACH ONE LONGER",
+                "content": frame_crop(spec, spec.intro_duration + .6, CROPS["find_the_exit_circle"]),
+                "floaters": [portal3d(index, 110) for index in (0, 1, 2, 3, 4, 0)]}
     if kind == "find_the_exit":
         return {"title": ("FIND THE", "EXIT"), "subtitle": "3 EXITS.  1 WAY OUT.", "cta": "CAN YOU ESCAPE?",
                 "line": f"{spec.round_count} MAZES  ·  EACH ONE LONGER", "content": maze_board(first),
@@ -670,6 +701,17 @@ def _template(spec: VideoSpec) -> dict:
         return {"title": ("LINE", "FOLLOW"), "subtitle": "FOLLOW THE LINE.", "cta": "WHERE DOES IT END?", "line": levels,
                 "content": board_for(board, (W, H)).crop(tuple(S(value) for value in CROPS[kind])).convert("RGBA"),
                 "floaters": [portal3d(index % 3, 110) for index in (0, 1, 2, 0, 1, 2)]}
+    if kind == "mind_mix":  # the three games as glossy cards; the floating tiles come from two of the real boards' colours
+        from .visuals.mind_mix import cover_card
+        from .visuals.shade_spot import _boosted
+        shapes = [token3d(token["shape"], token["color_value"], 110) for token in spec.rounds[0].data["sub"]["tokens"][:3]]
+        tiles = [tile3d(" ", 104, _boosted(color), "#FFFFFF") for color in spec.rounds[1].data["sub"]["tiles"][:3]]
+        return {"title": ("MIND", "MIX"), "subtitle": "3 GAMES. 1 VIDEO.", "cta": "CAN YOU DO ALL 3?", "line": "3 LEVELS  ·  ONE SCORE",
+                "content": cover_card(spec, SS), "floaters": shapes + tiles}
+    if kind == "memory_challenge" and first.get("layout") == "levels_v8":  # the hook's concept board: never a real level
+        tokens = [token3d(token["shape"], token["color_value"], 110) for token in spec.rounds[-1].data["tokens"][:6]]
+        return {"title": ("MEMORY", "CHALLENGE"), "subtitle": "REMEMBER IT ALL.", "cta": "TRUST YOUR MEMORY?", "line": f"{spec.round_count} LEVELS  ·  EACH ONE BIGGER",
+                "content": frame_crop(spec, .6, CROPS["memory_levels"]), "floaters": tokens}
     if kind == "memory_challenge":
         tokens = [token3d(token["shape"], token["color_value"], 110) for token in first["tokens"][:6]]
         return {"title": ("MEMORY", "CHALLENGE"), "subtitle": "REMEMBER ALL 9.",
@@ -680,6 +722,42 @@ def _template(spec: VideoSpec) -> dict:
         return {"title": ("LUCKY", "PICK"), "subtitle": "PICK ONE.", "cta": "ONLY ONE SURVIVES.", "line": "7 COLORS  ·  1 SURVIVOR",
                 "content": snake_board(spec) if first.get("map_version") == "snake_chase_v1" else lucky_board(first),
                 "floaters": [token3d(target["shape_id"], target["color_value"], 104) for target in targets[:6]]}
+    if kind == "shade_spot":  # level 1's two grids side by side and large (a small spoiler is accepted: it is the video's own puzzle)
+        from .visuals.shade_spot import _boosted, cover_card
+        colors = [_boosted(color) for color in first["tiles"][:6]]
+        return {"title": ("SHADE", "SPOT"), "subtitle": "SPOT THE DIFFERENCE.", "cta": "WHICH TILE CHANGED?", "line": levels,
+                "content": cover_card(spec, SS).convert("RGBA"),
+                "floaters": [tile3d(" ", 104, color, "#FFFFFF") for color in colors]}
+    if kind == "laser_maze":  # level 1's real board with the laser switched on, never the beam's path
+        colors = ["#FF3D5A", "#3DE0C8", "#7C5CFF", "#FFB547", "#3DA9FF", "#7ED957"]
+        return {"title": ("LASER", "MAZE"), "subtitle": "FOLLOW THE LASER.", "cta": "WHERE DOES IT END?",
+                "line": f"{spec.round_count} LEVELS  ·  MORE MIRRORS EACH TIME",
+                "content": frame_crop(spec, .6, CROPS[kind]),
+                "floaters": [tile3d(str(index + 1), 104, color, "#FFFFFF") for index, color in enumerate(colors)]}
+    if kind == "cup_shuffle":  # level 1's cups with the ball showing under one of them, never a shuffle
+        from .visuals.cup_shuffle import ball_sprite, cup_sprite
+        return {"title": ("CUP", "SHUFFLE"), "subtitle": "FOLLOW THE BALL.", "cta": "WHERE IS IT?", "line": f"{spec.round_count} LEVELS  ·  EACH ONE FASTER",
+                "content": frame_crop(spec, .6, CROPS[kind]),
+                "floaters": [cup_sprite("coral", S(150)), cup_sprite("violet", S(150)), cup_sprite("teal", S(150)),
+                             cup_sprite("blue", S(150)), ball_sprite(S(110)), ball_sprite(S(110))]}
+    if kind == "matchstick":  # the real level-1 equation, never its answer
+        from .visuals.matchstick import card_box, draw_equation, frame_for, stick_sprite
+        text = first["equation"]
+        canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        draw_equation(canvas, text, SS, frame=frame_for(spec))
+        x1, y1, x2, y2 = card_box(text)
+        board = canvas.crop((S(x1), S(y1), S(x2), S(y2)))
+        return {"title": ("MATCHSTICK", "MATH"), "gradient": ("#FFD27A", "#FF8A3D"), "accent": frame_for(spec),
+                "subtitle": "MOVE 1 MATCH.",
+                "cta": "MAKE IT TRUE.", "line": levels, "content": board,
+                "floaters": [stick_sprite(S(230)) for _ in range(6)]}
+    if kind == "chess_mate":  # the real position: it never shows the answer
+        from .visuals.chess_mate import board_for as chess_board, board_image
+        side = first["side"]
+        pieces = [piece3d(piece, index % 2 == 0, 118) for index, piece in enumerate("qnkrbq")]
+        return {"title": ("MATE", "IN 1"), "subtitle": f"{side.upper()} TO MOVE.", "cta": "FIND THE CHECKMATE.",
+                "line": "ONE MOVE  ·  COMMENT YOURS ↓", "content": board_image(first["fen"], side, S(880), chess_board(spec)),
+                "floaters": pieces}
     if kind == "bounce_arena":
         return {"title": ("BOUNCE", "ARENA"), "subtitle": "PICK A BALL.", "cta": "LAST ONE IN WINS.", "line": "REAL PHYSICS  ·  1 SURVIVOR",
                 "content": frame_crop(spec, 1.0, CROPS[kind]), "floaters": [ball3d(color, 110) for color in first["colors"]]}
@@ -688,17 +766,29 @@ def _template(spec: VideoSpec) -> dict:
 
 def has_template(spec: VideoSpec) -> bool:
     if spec.puzzle_type == "find_the_exit":
-        return bool(spec.rounds) and spec.rounds[0].data.get("layout") == "deceptive_v2"
+        return bool(spec.rounds) and spec.rounds[0].data.get("layout") in ("deceptive_v2", "polar_v1", "cells_v1")
     if spec.puzzle_type == "quick_math":
         return bool(spec.rounds) and "format" in spec.rounds[0].data
     if spec.puzzle_type == "line_follow":
-        return bool(spec.rounds) and spec.rounds[0].data.get("version") == "weave_v7"
+        return bool(spec.rounds) and spec.rounds[0].data.get("version") in ("weave_v7", "weave_v8")
     if spec.puzzle_type == "lucky_pick":
         return bool(spec.rounds) and spec.rounds[0].data.get("map_version") is not None
     if spec.puzzle_type == "bounce_arena":
         return bool(spec.rounds) and spec.rounds[0].data.get("version") == 8
     if spec.puzzle_type == "flash_count":
         return bool(spec.rounds) and spec.rounds[0].data.get("format") == "number_flash"
+    if spec.puzzle_type == "chess_mate":
+        return bool(spec.rounds) and spec.rounds[0].data.get("version") == "mate1_v1"
+    if spec.puzzle_type == "matchstick":
+        return bool(spec.rounds) and spec.rounds[0].data.get("version") == "matchstick_v1"
+    if spec.puzzle_type == "cup_shuffle":
+        return bool(spec.rounds) and spec.rounds[0].data.get("version") == "cups_v1"
+    if spec.puzzle_type == "shade_spot":
+        return bool(spec.rounds) and spec.rounds[0].data.get("version") == "shade_v1"
+    if spec.puzzle_type == "laser_maze":
+        return bool(spec.rounds) and spec.rounds[0].data.get("version") == "laser_v1"
+    if spec.puzzle_type == "mind_mix":
+        return bool(spec.rounds) and spec.rounds[0].data.get("version") == "mix_v1"
     return spec.puzzle_type in ("puzzle_fit", "cube_count", "memory_challenge")
 
 

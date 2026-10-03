@@ -24,7 +24,7 @@ def test_videos_are_valid_deterministic_and_grow() -> None:
         spec = generate(seed, "hard")
         validate_spec(spec)
         assert spec == generate(seed, "hard") and spec.difficulty == "hard"
-        assert (spec.intro_duration, spec.outro_duration) == (FLASH_INTRO, PUZZLE_FIT_OUTRO_DURATION) == (2.0, 1.6)
+        assert (spec.intro_duration, spec.outro_duration) == (FLASH_INTRO, PUZZLE_FIT_OUTRO_DURATION) == (4.0, 3.6)
         numbers = [item.answer for item in spec.rounds]
         assert len(set(numbers)) == len(numbers)
         assert [len(number) for number in numbers] == [FLASH_DIGITS[level_tier(i, 4)] for i in range(4)] == [4, 4, 5, 6]
@@ -92,7 +92,7 @@ def test_the_cover_number_is_random_and_never_a_level() -> None:
 def test_ready_screen_has_no_timer_or_number() -> None:
     import inspect
     source = inspect.getsource(draw_flash_intro)
-    assert "ARE YOU READY?" == __import__("puzzly.visuals.flash_count", fromlist=["HOOK_TEXT"]).HOOK_TEXT
+    assert "BLINK AND YOU MISS IT." == __import__("puzzly.visuals.flash_count", fromlist=["HOOK_TEXT"]).HOOK_TEXT  # ready.py asks ARE YOU READY?
     assert "_timer" not in source and "_digit" not in source
 
 

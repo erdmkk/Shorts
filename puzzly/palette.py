@@ -16,7 +16,9 @@ from .config import DARK_THEMES, dark_theme_for
 from .models import VideoSpec
 
 BACKGROUND_LABELS = {"random": "Rastgele", "violet": "Mor", "ocean": "Okyanus mavisi", "teal": "Turkuaz",
-                     "crimson": "Kızıl", "emerald": "Zümrüt yeşili", "ember": "Kor turuncu", "plum": "Erik moru"}
+                     "gold": "Altın sarısı", "emerald": "Zümrüt yeşili", "ember": "Kor turuncu", "plum": "Erik moru",
+                     "lemon": "Canlı sarı", "tangerine": "Canlı turuncu", "pink": "Canlı pembe", "cyan": "Canlı camgöbeği",
+                     "lime": "Canlı limon yeşili"}
 PALETTE_LABELS = {"classic": "Klasik", "neon": "Neon", "pastel": "Pastel", "jewel": "Mücevher tonları"}
 # (saturation multiplier, saturation floor, brightness multiplier, brightness floor, brightness cap)
 PALETTES = {
@@ -25,7 +27,7 @@ PALETTES = {
     "pastel": (.55, 0.0, 1.0, .93, 1.0),  # soft and light, but still clearly different hues
     "jewel": (1.1, .7, .74, 0.0, .78),  # deep, rich tones
 }
-NO_PALETTE_GAMES = ("memory_challenge",)
+NO_PALETTE_GAMES = ("memory_challenge", "shade_spot", "mind_mix", "laser_maze")  # their colours ARE the puzzle
 _ACTIVE = {"palette": None}
 
 

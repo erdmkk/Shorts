@@ -122,8 +122,15 @@ def _hole_slots(rows: int, columns: int, difficulty: str, tier: int = 1) -> list
 
 
 def generate(seed: int, difficulty: str = "easy", theme: str = "interlocking", round_count: int | None = None) -> VideoSpec:
+    """Current Puzzle Fit (V12): one big picture with three missing pieces and six tilted options. See puzzle_fit_v12."""
+    from .puzzle_fit_v12 import generate as generate_v12
+    return generate_v12(seed, difficulty)
+
+
+def legacy_generate(seed: int, difficulty: str = "easy", theme: str = "interlocking", round_count: int | None = None) -> VideoSpec:
+    """Puzzle Fit V10 (five levels, nine near-identical candidates on Hard). Kept for tests and old records."""
     difficulty = difficulty if difficulty in ("easy", "medium", "hard") else "easy"
-    count = round_count or DEFAULT_ROUNDS["puzzle_fit"]
+    count = round_count or 5  # V10 videos had five levels
     rng = random.Random(f"puzzle_fit_v10:{seed}:{difficulty}:{theme}:{count}")
     rounds: list[RoundSpec] = []
     used: set[str] = set()

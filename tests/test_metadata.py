@@ -1,3 +1,4 @@
+import json
 import csv
 from io import BytesIO
 
@@ -41,7 +42,7 @@ def test_batch_manifest_records_all_active_types(tmp_path, monkeypatch) -> None:
     for spec, row in zip(specs, rows):
         assert row["puzzle_type"] == spec.puzzle_type
         no_difficulty = ("lucky_pick", "hidden_motion_hunt", "bounce_arena")
-        level = "hard" if spec.puzzle_type in ("flash_count", "line_follow") else "medium"  # produced only in Hard
+        level = "hard" if spec.puzzle_type in ("flash_count", "line_follow", "cup_shuffle", "shade_spot", "memory_challenge", "mind_mix", "laser_maze") else "medium"  # produced only in Hard
         assert row["difficulty"] == ("" if spec.puzzle_type in no_difficulty else level)
         assert row["filename"] == row["cover_filename"].replace(".jpg", ".mp4")
         expected_suffix = (f"_{spec.puzzle_type}.mp4"
@@ -53,11 +54,11 @@ def test_batch_manifest_records_all_active_types(tmp_path, monkeypatch) -> None:
         assert row["validation_status"] == "valid"
         assert "#shorts" in row["youtube_title"]
         if spec.puzzle_type == "memory_challenge":
-            assert "question_order" in row["question"]
+            assert "questions" in row["question"]  # all three levels are in the manifest
             assert row["token_shapes"] != "[]"
             assert row["color_ids"] != "[]"
-            assert row["token_positions"] == "[1, 2, 3, 4, 5, 6, 7, 8, 9]"
-            assert row["question_order"] != "[]" and row["final_auto_reveal"]
+            assert row["token_positions"] == str(list(range(1, 5)) + list(range(1, 7)) + list(range(1, 10)))
+            assert row["question_order"] != "[]" and len(json.loads(row["question_order"])) == 3
         elif spec.puzzle_type == "quick_math":
             assert row["equation_templates"] != "[]" and row["operations"] != "[]"
         elif spec.puzzle_type == "missing_number":

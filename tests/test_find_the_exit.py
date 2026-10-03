@@ -36,16 +36,17 @@ def test_invalid_maze_answer_and_route_are_rejected() -> None:
 def test_hard_mazes_snake_hide_their_seams_and_escalate() -> None:
     from collections import Counter
     from puzzly.puzzles.find_the_exit import (DECOY_DEPTH, DECOY_QUOTA, DECOY_REACH, HARD_LEVELS, MIN_DECOY_SHARE,
-                                              decoy_reach, errors, grid_neighbors, longest_straight_wall, vertical_runs)
+                                              decoy_reach, errors, grid_neighbors, hard_answers, longest_straight_wall,
+                                              vertical_runs)
     answers = Counter()
     for seed in range(8):
         spec = generate(seed, "hard")
         validate_spec(spec)
-        assert spec.intro_duration == 1.0 and spec.outro_duration == 1.6
-        assert {item.answer for item in spec.rounds[:3]} == {0, 1, 2}  # levels 1-3 use every exit once
+        assert spec.intro_duration == 1.0 and spec.outro_duration == 3.6
+        assert [item.answer for item in spec.rounds] == hard_answers(seed, 4)
         sizes = [(item.data["rows"], item.data["columns"]) for item in spec.rounds]
         # Every level is a larger grid: narrower corridors and a longer answer route in the same maze box.
-        assert sizes == [(10, 8), (12, 10), (14, 12), (16, 13)]
+        assert sizes == [(12, 10), (14, 12), (16, 14), (18, 15)]
         route_lengths = [len(item.data["route"]) for item in spec.rounds]
         assert route_lengths == sorted(route_lengths) and len(set(route_lengths)) == len(route_lengths)
         for item in spec.rounds:
@@ -74,7 +75,7 @@ def test_hard_mazes_snake_hide_their_seams_and_escalate() -> None:
             for node in d["decoy_ends"]:
                 assert node not in reachable and node // d["columns"] >= d["rows"] * DECOY_DEPTH
                 assert any(n in route_cells for n in grid_neighbors(node, d["rows"], d["columns"]))
-    assert min(answers.values()) >= 8
+    assert len(answers) >= 3
 
 
 def test_hard_level_n_uses_grid_tier_n_and_its_own_thinking_time() -> None:
@@ -84,21 +85,21 @@ def test_hard_level_n_uses_grid_tier_n_and_its_own_thinking_time() -> None:
     assert [level_tier(index, 3) for index in range(3)] == [0, 1, 2]
     assert [level_tier(index, 5) for index in range(5)] == [0, 1, 2, 3, 4]
     spec = generate(4, "hard")
-    assert [item.data["thinking_seconds"] for item in spec.rounds] == [5.0, 6.0, 7.0, 8.0]
+    assert [item.data["thinking_seconds"] for item in spec.rounds] == [6.0, 7.0, 8.0, 9.0]
     levels = schedule(spec)
-    assert [duration for _, duration in levels] == [exit_hard_round(value) for value in (5.0, 6.0, 7.0, 8.0)]
+    assert [duration for _, duration in levels] == [exit_hard_round(value) for value in (6.0, 7.0, 8.0, 9.0)]
     assert abs(levels[-1][0] + levels[-1][1] + spec.outro_duration - spec.total_duration) < 1e-3
-    # Five levels: the fifth is a slightly larger grid, in the same proportions, with 9 seconds to think.
+    # Five levels: the fifth is the largest grid, 16x20, with 10 seconds to think.
     five = generate(4, "hard", round_count=5)
     validate_spec(five)
-    assert [(item.data["rows"], item.data["columns"]) for item in five.rounds][-2:] == [(16, 13), (17, 14)]
-    assert five.rounds[-1].data["thinking_seconds"] == 9.0
-    assert len(five.rounds[-1].data["route"]) >= 92
+    assert [(item.data["rows"], item.data["columns"]) for item in five.rounds][-2:] == [(18, 15), (20, 16)]
+    assert five.rounds[-1].data["thinking_seconds"] == 10.0
+    assert len(five.rounds[-1].data["route"]) >= 118
     assert [len(item.data["exits"]) for item in five.rounds] == [3, 3, 3, 4, 4]
     assert {item.answer for item in five.rounds[3:]} <= {0, 1, 2, 3}
     # A wrong thinking time for the level is rejected; older videos without one keep 8 s on every level.
     item = spec.rounds[0]
-    assert round_errors(replace(item, data={**item.data, "thinking_seconds": 8.0}))
+    assert round_errors(replace(item, data={**item.data, "thinking_seconds": 8.0}))  # level 1 thinks 6 s
     legacy = {key: value for key, value in item.data.items() if key != "thinking_seconds"}
     assert round_errors(replace(item, data=legacy)) == []
 
@@ -139,3 +140,32 @@ def test_hard_rejects_small_or_shallow_false_regions_in_new_mazes() -> None:
 def test_hard_rejects_a_maze_with_invalid_decoys() -> None:
     item = generate(2, "hard").rounds[0]
     assert round_errors(replace(item, data={**item.data, "decoy_ends": [0, 1]}))
+
+
+def test_hard_answers_are_independent_and_uniform_per_level() -> None:
+    from collections import Counter
+    from puzzly.puzzles.find_the_exit import hard_answers
+    firsts, per_level = Counter(), [Counter() for _ in range(4)]
+    for seed in range(6000):
+        answers = hard_answers(seed, 4)
+        firsts[tuple(answers[:3])] += 1
+        for level, answer in enumerate(answers):
+            per_level[level][answer] += 1
+    # Levels 1-3 are three independent draws: all 27 combinations occur, including repeats such as the same exit twice.
+    assert len(firsts) == 27 and max(firsts.values()) < 2 * min(firsts.values())
+    for level, counts in enumerate(per_level):
+        exits = 4 if level == 3 else 3
+        assert sorted(counts) == list(range(exits))
+        assert max(counts.values()) - min(counts.values()) < .1 * 6000 / exits
+
+
+def test_every_level_is_larger_than_before_and_older_sizes_still_validate() -> None:
+    from puzzly.puzzles.find_the_exit import HARD_LEVELS, LEGACY_HARD_LEVELS, level_thinking
+    sizes = [(level["columns"], level["rows"]) for level in HARD_LEVELS]
+    assert sizes == [(10, 12), (12, 14), (14, 16), (15, 18), (16, 20)]
+    assert [level["thinking"] for level in HARD_LEVELS] == [6.0, 7.0, 8.0, 9.0, 10.0]
+    cells = [columns * rows for columns, rows in sizes]
+    assert cells == sorted(cells) and all(level["min_route"] > previous["min_route"] for previous, level in zip(HARD_LEVELS, HARD_LEVELS[1:]))
+    # The earlier sizes keep their own thinking times, so saved videos still validate.
+    assert level_thinking(10, 8) == 5.0 and level_thinking(16, 13) == 8.0 and level_thinking(17, 14) == 9.0
+    assert {(level["columns"], level["rows"]) for level in LEGACY_HARD_LEVELS} >= {(8, 10), (13, 16), (14, 17), (9, 11)}

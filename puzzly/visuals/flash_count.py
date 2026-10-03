@@ -19,7 +19,7 @@ from .puzzle_fit import (PALETTE, _background, _clamp, _level_header, _rgb, _sna
                          draw_puzzle_fit_outro)
 from .text import WINDOWS_FONTS, display_font, fitted_font, font
 
-HOOK_TEXT = "ARE YOU READY?"
+HOOK_TEXT = "BLINK AND YOU MISS IT."  # the READY screen (ready.py) asks ARE YOU READY? after it
 QUESTION = "What was the number?"
 CARD = (60, 690, 1020, 1030)
 ROW_Y = 860
@@ -187,7 +187,8 @@ def draw_flash_intro(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image.
     for box in boxes:
         _slot(image, box, scale, PALETTE["hole"], PALETTE["surface_edge"], _clamp(t / .25))
     _brackets(image, boxes, scale, .55 + .45 * abs((t * 1.5) % 2 - 1))
-    fade = 1 - _clamp((t - (spec.intro_duration - .25)) / .25)
+    from .ready import hook_end
+    fade = 1 - _clamp((t - (hook_end(spec) - .25)) / .25)
     slam = 1 + .35 * (1 - ease_out_cubic(_clamp(t / .2)))
     _text(image, (540 * scale, 520 * scale), HOOK_TEXT, fitted_font(HOOK_TEXT, round(940 * scale), round(96 * scale)),
           PALETTE["text_light"], fade * _clamp(t / .08 + .3), slam)
@@ -198,6 +199,9 @@ def draw_flash_intro(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image.
 
 def draw_flash_frame(spec: VideoSpec, t: float, size: tuple[int, int]) -> Image.Image:
     if t < spec.intro_duration:
+        from .ready import HOOK_SECONDS, draw_ready_screen, has_ready
+        if has_ready(spec) and t >= HOOK_SECONDS:
+            return draw_ready_screen(spec, t - HOOK_SECONDS, size)
         return draw_flash_intro(spec, t, size)
     rounds_end = spec.intro_duration + spec.round_count * spec.round_duration
     if t >= rounds_end:

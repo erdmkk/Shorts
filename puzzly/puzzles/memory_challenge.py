@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from ..config import (MEMORY_GRID_QUESTIONS, MEMORY_GRID_TOKENS, MEMORY_MEMORIZE, MEMORY_THINKING_DURATION,
-                      PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION, round_duration)
+                      READY_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION, memory_round_duration)
 from ..memory_colors import (COLOR_LEVEL_THEMES, DEFAULT_GRID_COLOR_LEVEL, GRID_COLORS, GRID_PALETTE_IDS, grid_palette,
                              grid_palette_errors, infer_color_level)
 from ..models import RoundSpec, VideoSpec
@@ -26,7 +26,13 @@ MEMORY_SHAPES = SHAPES + ("cross", "moon")  # nine per board; pentagon and hexag
 GRID_LAYOUT = "grid3"
 
 
-def generate(seed: int, difficulty: str = "easy", theme: str = "memory_tokens", round_count: int | None = None) -> VideoSpec:
+def generate(seed: int, difficulty: str = "easy", theme: str = "memory_tokens", round_count: int | None = None,
+             classic: bool = False) -> VideoSpec:
+    """The three-level Memory Challenge (V8, see memory_levels.py), always Hard. `classic=True` makes the earlier single
+    3x3 board (eight questions, difficulty-dependent memorize time), kept for tests and old records."""
+    if not classic:
+        from . import memory_levels
+        return memory_levels.generate(seed, theme, round_count)
     if round_count not in (None, 1):
         raise ValueError("Memory Challenge uses one fixed board")
     difficulty = difficulty if difficulty in MEMORY_MEMORIZE else "easy"
@@ -50,10 +56,13 @@ def generate(seed: int, difficulty: str = "easy", theme: str = "memory_tokens", 
     board = RoundSpec(0, "memory_challenge", data, {"question_order": timed, "final_position": final})
     stable_id = sha256(f"memory_grid_v1:{seed}:{difficulty}:{level}".encode()).hexdigest()[:12]
     return VideoSpec(f"PZ-{stable_id}", "memory_challenge", seed, difficulty, "memory_tokens", (board,),
-                     PUZZLE_FIT_INTRO_DURATION, round_duration("memory_challenge", difficulty), PUZZLE_FIT_OUTRO_DURATION)
+                     READY_INTRO_DURATION, memory_round_duration(difficulty), PUZZLE_FIT_OUTRO_DURATION)
 
 
 def errors(data: dict[str, Any], answer: Any, difficulty: str | None = None) -> list[str]:
+    if data.get("layout") == "levels_v8":
+        from . import memory_levels
+        return memory_levels.errors(data, answer, difficulty)
     result: list[str] = []
     difficulty = difficulty if difficulty in MEMORY_MEMORIZE else "easy"
     tokens = data.get("tokens", [])

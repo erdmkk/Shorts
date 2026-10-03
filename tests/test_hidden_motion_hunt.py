@@ -49,7 +49,8 @@ def test_registry_standalone_status_and_ui_controls() -> None:
     assert "Number of videos" in labels and "Quality" in labels
     uploaders = app.get("file_uploader")
     assert len(uploaders) == 1 and uploaders[0].label == "Background Image Upload"
-    assert len(app.radio) == 1 and app.radio[0].options == ["Manual Placement", "Auto Placement"]
+    placement = [radio for radio in app.radio if radio.label == "Placement Mode"]
+    assert len(placement) == 1 and placement[0].options == ["Manual Placement", "Auto Placement"]
     assert "Upload a 9:16 background image" in " ".join(item.value for item in app.caption)
 
 

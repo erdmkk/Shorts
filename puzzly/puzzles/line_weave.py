@@ -31,10 +31,15 @@ from hashlib import sha256
 import math
 import random
 
-from ..config import LINE_THINKING, PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION, line_round
+from ..config import LINE_THINKING, LINE_THINKING_V7, PUZZLE_FIT_INTRO_DURATION, PUZZLE_FIT_OUTRO_DURATION, line_round
 from ..models import RoundSpec, VideoSpec
 
-VERSION = "weave_v7"
+VERSION = "weave_v8"  # 4, 5, 5, 6, 6 lines; weave_v7 (5, 5, 5, 4, 4) records still validate and render
+VERSIONS = ("weave_v7", VERSION)
+
+
+def is_weave(data: dict) -> bool:
+    return data.get("version") in VERSIONS
 BOX = (86.0, 452.0, 994.0, 1558.0)  # control points (so the whole curve) stay inside this box
 TOP_Y, BOTTOM_Y = 410.0, 1600.0  # line starts under the target portals; the figure's head on the bottom row
 TARGET_Y = 368.0  # centre of the target portals
@@ -85,18 +90,38 @@ REGROWS = 4  # extra tries of the last line when the figure's line is not tangle
 ROUND_TRIES = 200
 COVER_CELL = 40.0  # board coverage is measured on this grid ...
 COVER_REACH = 44.0  # ... as the share of cells with a line this close
-# Level tiers: lines on the board, the figure's line length and the other lines' length range (px; both grow level by
-# level, the others a little less: the board only holds so much line, which is also why the top levels have 4 lines
-# instead of 5), how often the figure's line and the others may cross themselves (long lines need
-# loops to fill the board; each one is just another crossing to follow), the least crossings on the figure's line, and
-# the least share of the board the lines must cover.
+# Level tiers (Weave V8): lines on the board (4, 5, 5, 6, 6: one more target and line as the levels climb), the figure's
+# line length and the other lines' length range (px), how often the figure's line and the others may cross themselves
+# (long lines need loops to fill the board; each one is just another crossing to follow), the least crossings on the
+# figure's line, and the least share of the board the lines must cover. The board fills up level by level (measured,
+# about: total line 12.1k -> 17.4k -> 17.6k -> 18.1k -> 19.0k px, coverage .69 -> .82 -> .83 -> .82 -> .85). With six
+# lines the board is about as full as the readability rules allow (18 px between lines that do not cross, 36 degree
+# crossings; denser settings fail to weave), so six lines share it and their other lines are shorter than at level 3,
+# while the figure's line keeps growing and crosses more lines.
 TIERS = (
+    {"lines": 4, "length": 2800, "decoy": (2400, 3000), "self_cross": 5, "decoy_self": 2, "min_cross": 11, "min_cover": .66},
+    {"lines": 5, "length": 4300, "decoy": (3000, 3700), "self_cross": 6, "decoy_self": 3, "min_cross": 18, "min_cover": .73},
+    {"lines": 5, "length": 5200, "decoy": (3300, 4000), "self_cross": 8, "decoy_self": 3, "min_cross": 22, "min_cover": .76},
+    {"lines": 6, "length": 5400, "decoy": (2400, 3000), "self_cross": 8, "decoy_self": 4, "min_cross": 24, "min_cover": .77},
+    {"lines": 6, "length": 6000, "decoy": (2600, 3200), "self_cross": 10, "decoy_self": 4, "min_cross": 28, "min_cover": .78},
+)
+
+
+TIERS_V7 = (  # weave_v7: 5, 5, 5, 4, 4 lines (kept so older records still validate)
     {"lines": 5, "length": 3400, "decoy": (2600, 3200), "self_cross": 5, "decoy_self": 2, "min_cross": 14, "min_cover": .70},
     {"lines": 5, "length": 4300, "decoy": (3000, 3700), "self_cross": 6, "decoy_self": 3, "min_cross": 18, "min_cover": .73},
     {"lines": 5, "length": 5200, "decoy": (3300, 4000), "self_cross": 8, "decoy_self": 3, "min_cross": 22, "min_cover": .76},
     {"lines": 4, "length": 6000, "decoy": (3500, 4200), "self_cross": 9, "decoy_self": 4, "min_cross": 24, "min_cover": .76},
     {"lines": 4, "length": 7000, "decoy": (3700, 4500), "self_cross": 12, "decoy_self": 5, "min_cross": 27, "min_cover": .78},
 )
+
+
+def tier_table(data: dict) -> tuple:
+    return TIERS_V7 if data.get("version") == "weave_v7" else TIERS
+
+
+def thinking_table(data: dict) -> tuple:
+    return LINE_THINKING_V7 if data.get("version") == "weave_v7" else LINE_THINKING
 
 
 CHIMNEY = (0.0, 45.0, 90.0, 135.0, 180.0)  # every target keeps a clear chimney under it: other lines stay END_CLEAR from these
@@ -821,9 +846,10 @@ def _readable(lines, lines_points, loops: int, decoy_loops: int, figure) -> bool
 
 def validate(data: dict, answer: int) -> list[str]:
     tier_index = data.get("tier")
-    if tier_index not in range(len(TIERS)):
+    tiers = tier_table(data)
+    if tier_index not in range(len(tiers)):
         return ["line follow level is invalid"]
-    tier = TIERS[tier_index]
+    tier = tiers[tier_index]
     lines = data.get("lines", [])
     count = tier["lines"]
     if len(lines) != count or len(data.get("targets", [])) != count:
@@ -875,6 +901,6 @@ def validate(data: dict, answer: int) -> list[str]:
     filled = coverage(points_list, figure)
     if filled < tier["min_cover"] or data.get("coverage") != filled:
         return ["the lines do not fill enough of the board for its level"]
-    if data.get("thinking_seconds") != LINE_THINKING[tier_index]:
+    if data.get("thinking_seconds") != thinking_table(data)[tier_index]:
         return ["line follow thinking time does not match its level"]
     return []
